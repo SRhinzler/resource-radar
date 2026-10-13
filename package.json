@@ -1,0 +1,47 @@
+{
+  "name": "resource-radar",
+  "version": "1.0.0",
+  "description": "A focused Windows desktop app for discovering and downloading public videos and documents from a webpage.",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "verify:bundle": "node scripts/verify-bundle.js",
+    "build:win": "npm run verify:bundle && electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.rhinzler.resourceradar",
+    "productName": "Resource Radar",
+    "directories": {
+      "output": "dist-self-contained"
+    },
+    "files": [
+      "src/**/*",
+      "bin/README.md",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "yt-dlp.exe",
+          "ffmpeg.exe",
+          "ffprobe.exe",
+          "deno.exe",
+          "manifest.json",
+          "THIRD_PARTY_NOTICES.md"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "Resource-Radar-Setup-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12"
+  }
+}

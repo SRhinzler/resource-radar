@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Resource Radar</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <p class="eyebrow">PUBLIC RESOURCE DOWNLOADER</p>
+            <h1>Resource Radar</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="safe-pill"><span class="status-dot"></span> Downloads stay on this PC</span>
+          <button class="icon-button" id="open-downloads" title="Open Downloads folder" aria-label="Open Downloads folder">↗</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-card">
+          <div class="hero-copy">
+            <p class="section-kicker">START WITH A URL</p>
+            <h2>Find the files worth keeping.</h2>
+            <p>Scan a public page for videos and documents, or paste a supported social video URL to choose its quality before saving.</p>
+          </div>
+          <div class="url-row">
+            <label class="sr-only" for="url-input">Website URL</label>
+            <div class="url-input-wrap">
+              <span class="url-prefix">↗</span>
+              <input id="url-input" type="url" inputmode="url" autocomplete="off" placeholder="https://example.com/article" spellcheck="false" />
+              <button class="clear-input" id="clear-url" type="button" aria-label="Clear URL">×</button>
+            </div>
+            <button class="primary-button scan-button" id="scan-button" type="button"><span class="button-icon">⌕</span> Scan page</button>
+          </div>
+          <div class="hint-row">
+            <span>Supports direct files on public pages</span>
+            <span class="hint-separator">•</span>
+            <span>Up to 3 direct downloads at once</span>
+            <span class="hint-separator">•</span>
+            <span>YouTube · Dailymotion · LinkedIn · Instagram</span>
+          </div>
+        </section>
+
+        <div id="global-message" class="message hidden" role="status"></div>
+
+        <section id="empty-state" class="empty-state">
+          <div class="empty-illustration" aria-hidden="true">
+            <div class="radar-ring ring-one"></div>
+            <div class="radar-ring ring-two"></div>
+            <div class="radar-sweep"></div>
+            <div class="radar-dot dot-one"></div>
+            <div class="radar-dot dot-two"></div>
+          </div>
+          <p class="section-kicker">READY WHEN YOU ARE</p>
+          <h3>Paste a public URL to begin</h3>
+          <p>We will show discovered videos and documents here before anything is saved.</p>
+        </section>
+
+        <section id="direct-results" class="results-card hidden">
+          <div class="results-header">
+            <div>
+              <p class="section-kicker">PAGE SCAN</p>
+              <h3>Discovered resources <span class="count-badge" id="direct-count">0</span></h3>
+              <p class="muted-text" id="direct-page-url"></p>
+            </div>
+            <div class="results-actions">
+              <button class="text-button" id="select-all" type="button">Select all</button>
+              <button class="secondary-button" id="download-selected" type="button" disabled>Download selected</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="check-col"><span class="sr-only">Select</span></th>
+                  <th>Resource</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody id="direct-list"></tbody>
+            </table>
+          </div>
+          <div id="direct-empty" class="inline-empty hidden">No direct video or document resources were found on this page.</div>
+        </section>
+
+        <section id="video-results" class="video-layout hidden">
+          <div class="video-card preview-card">
+            <div class="platform-row"><span class="platform-icon" id="video-platform-icon">▶</span><span id="video-platform-name">Platform video</span><span class="verified-badge">PUBLIC URL</span></div>
+            <h3 id="video-title">Video title</h3>
+            <p class="muted-text" id="video-uploader"></p>
+            <div class="video-meta" id="video-meta"></div>
+            <div class="quality-summary">
+              <span class="quality-label">Available quality</span>
+              <strong id="video-quality-summary">—</strong>
+            </div>
+          </div>
+          <div class="video-card quality-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">QUALITY</p>
+                <h3>Choose your download</h3>
+              </div>
+              <span class="highest-chip">Best by default</span>
+            </div>
+            <label class="field-label" for="video-resolution">Maximum resolution</label>
+            <select class="select-input" id="video-resolution"></select>
+            <p class="field-help">The app picks the best available video and audio streams under this limit. Separate streams require ffmpeg.</p>
+            <button class="primary-button full-button" id="download-video" type="button"><span class="button-icon">↓</span> Download video</button>
+          </div>
+        </section>
+
+        <section id="playlist-results" class="playlist-card hidden">
+          <div class="playlist-header">
+            <div>
+              <div class="platform-row"><span class="platform-icon">≡</span><span>YouTube playlist</span><span class="oldest-badge">OLDEST FIRST</span></div>
+              <h3 id="playlist-title">Playlist title</h3>
+              <p class="muted-text" id="playlist-uploader"></p>
+            </div>
+            <div class="playlist-stat"><strong id="playlist-count">0</strong><span>videos queued</span></div>
+          </div>
+          <div class="playlist-toolbar">
+            <div>
+              <label class="field-label" for="playlist-resolution">Maximum resolution for every video</label>
+              <select class="select-input compact-select" id="playlist-resolution"></select>
+            </div>
+            <div class="sequence-note"><span class="sequence-number">1</span><span>Saved to <strong>Downloads\Playlist</strong>, one at a time with <strong>1. 2. 3.</strong> filename prefixes.</span></div>
+            <button class="primary-button" id="download-playlist" type="button"><span class="button-icon">↓</span> Download playlist</button>
+          </div>
+          <div class="playlist-table-wrap">
+            <table>
+              <thead>
+                <tr><th class="order-col">Order</th><th>Video</th><th>Published</th><th>Length</th><th>Status</th></tr>
+              </thead>
+              <tbody id="playlist-list"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="progress-card" class="progress-card hidden">
+          <div class="progress-header">
+            <div>
+              <p class="section-kicker">DOWNLOAD QUEUE</p>
+              <h3 id="progress-title">Saving your files</h3>
+            </div>
+            <button class="text-button danger-text" id="cancel-downloads" type="button">Stop queue</button>
+          </div>
+          <div class="progress-summary"><span id="progress-label">Preparing…</span><strong id="progress-percent">0%</strong></div>
+          <div class="progress-track" id="progress-track" role="progressbar" aria-label="Download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-detail"><span id="progress-detail">Your files are saved to Downloads.</span><button class="text-button hidden" id="progress-open-folder" type="button">Open folder</button></div>
+          <div class="download-log" id="download-log"></div>
+        </section>
+      </main>
+
+      <footer class="footer-note">
+        <span><span class="shield-icon">◆</span> Public resources only. No sign-in, cookies, DRM bypass, or paywall circumvention.</span>
+        <span>v1.0 · Resource Radar</span>
+      </footer>
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

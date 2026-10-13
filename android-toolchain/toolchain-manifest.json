@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "asOf": "2026-10-12",
+  "platform": "android",
+  "status": "termux-runtime-scaffold-not-release",
+  "binariesCheckedIn": false,
+  "target": {
+    "primaryAbi": "arm64-v8a",
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86_64"
+    ],
+    "termuxArchitectures": {
+      "arm64-v8a": "aarch64",
+      "armeabi-v7a": "arm",
+      "x86_64": "x86_64"
+    },
+    "termuxApiLevel": 24,
+    "legacyEmulatorAbi": "x86"
+  },
+  "termux": {
+    "packagesRepository": "https://github.com/termux/termux-packages",
+    "packagesCommit": "3e13ceaa08e462bb3e0eb6529135ad67f9a3a9c5",
+    "packagesCommitUrl": "https://github.com/termux/termux-packages/commit/3e13ceaa08e462bb3e0eb6529135ad67f9a3a9c5",
+    "minimumAndroid": "7 (Android API 24 for the current master build configuration)",
+    "requiredPackages": [
+      "python",
+      "python-pip",
+      "ffmpeg",
+      "nodejs"
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "yt-dlp",
+      "status": "usable-via-termux-python",
+      "version": "2026.08.19",
+      "sourceUrl": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.tar.gz",
+      "sourceSha256": "072aad4f2a7604e92155f61a275a4752dc64046c8f6d90df3710525d94cd37c1",
+      "license": "Unlicense with MIT and ISC components (official release tarball)",
+      "notes": "The official Android installation guidance uses Python/pip in Termux. The official Linux aarch64 executable is a glibc Linux artifact, not an Android/Bionic artifact, and is not used here. The release tarball's bundled JavaScript components carry their upstream MIT/ISC notices."
+    },
+    {
+      "name": "yt-dlp-ejs",
+      "status": "usable-via-termux-python",
+      "version": "0.8.0",
+      "sourceUrl": "https://files.pythonhosted.org/packages/e3/bd/520769863744b669440a924271a6159ddd82ad5ae26b4ac4d4b69e9f8d44/yt_dlp_ejs-0.8.0-py3-none-any.whl",
+      "sourceSha256": "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4",
+      "license": "Unlicense with MIT and ISC components",
+      "notes": "Pinned by yt-dlp 2026.08.19. The package is pure Python/JavaScript data; the JavaScript runtime remains a separate dependency."
+    },
+    {
+      "name": "ffmpeg",
+      "status": "usable-via-termux-package",
+      "version": "8.1.3",
+      "sourceUrl": "https://www.ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz",
+      "sourceSha256": "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3",
+      "buildRecipeUrl": "https://raw.githubusercontent.com/termux/termux-packages/3e13ceaa08e462bb3e0eb6529135ad67f9a3a9c5/packages/ffmpeg/build.sh",
+      "license": "GPL-3.0 for the pinned Termux configuration",
+      "notes": "The pinned Termux recipe configures --target-os=android and maps aarch64, arm, x86_64, and i686 Android builds. It also produces ffprobe from the same source package."
+    },
+    {
+      "name": "python",
+      "status": "usable-via-termux-package",
+      "version": "3.14.6",
+      "sourceUrl": "https://www.python.org/ftp/python/3.14.6/Python-3.14.6.tar.xz",
+      "sourceSha256": "143b1dddefaec3bd2e21e3b839b34a2b7fb9842272883c576420d605e9f30c63",
+      "buildRecipeUrl": "https://raw.githubusercontent.com/termux/termux-packages/3e13ceaa08e462bb3e0eb6529135ad67f9a3a9c5/packages/python/build.sh",
+      "license": "PSF-2.0 plus the licenses of bundled dependencies",
+      "notes": "Termux applies Android-specific build settings and patches; this is not the Windows Python runtime."
+    },
+    {
+      "name": "node",
+      "status": "candidate-js-runtime",
+      "version": "26.4.0",
+      "sourceUrl": "https://nodejs.org/dist/v26.4.0/node-v26.4.0.tar.xz",
+      "sourceSha256": "9eceb3621024069d91035b5471d2ebe86aa04d22dbeba72a782eaf36ff9183ac",
+      "buildRecipeUrl": "https://raw.githubusercontent.com/termux/termux-packages/3e13ceaa08e462bb3e0eb6529135ad67f9a3a9c5/packages/nodejs/build.sh",
+      "license": "MIT plus the licenses of bundled dependencies",
+      "notes": "yt-dlp EJS documents Node 22 or newer as supported. The Termux recipe targets Android; this candidate must still be smoke-tested with the chosen yt-dlp/ejs pair on each target ABI."
+    },
+    {
+      "name": "deno",
+      "status": "blocked-no-official-android-artifact",
+      "version": "2.9.7 (current Windows helper)",
+      "sourceUrl": "https://docs.deno.com/runtime/getting_started/installation/",
+      "license": "MIT",
+      "notes": "Deno's official installation matrix lists macOS, Linux, and Windows x64/arm64 assets, not Android. The existing deno.exe is x86_64-pc-windows-msvc and cannot run on Android."
+    }
+  ],
+  "publicSources": [
+    "https://github.com/yt-dlp/yt-dlp/wiki/Installation#android",
+    "https://github.com/yt-dlp/yt-dlp/wiki/EJS",
+    "https://github.com/yt-dlp/yt-dlp#release-files",
+    "https://ffmpeg.org/download.html",
+    "https://ffmpeg.org/legal.html",
+    "https://github.com/termux/termux-packages/wiki/Building-packages",
+    "https://developer.android.com/ndk/guides/abis",
+    "https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent"
+  ],
+  "runtimePolicy": {
+    "passesCookies": false,
+    "passesTokens": false,
+    "allowsYtDlpRemoteComponents": false,
+    "allowsYtDlpConfigFiles": false,
+    "requiresPublicHttpUrls": true
+  }
+}

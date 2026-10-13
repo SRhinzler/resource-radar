@@ -1,0 +1,36 @@
+Resource Radar Android — third-party notices
+
+Resource Radar uses the following public components in the Android build. This
+file is included in the APK so the notices remain available without network
+access.
+
+1. yt-dlp Android library 0.18.1 with the bundled platform-independent yt-dlp
+   2026.08.19 runtime (SHA-256:
+   1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6)
+   Project: https://github.com/yausername/youtubedl-android
+   License: GPL-3.0. The bundled yt-dlp project and its components retain their
+   own upstream notices. The runtime is the official yt-dlp zipimport release
+   asset for Android's embedded Python runner. Source and license:
+   https://github.com/yt-dlp/yt-dlp
+
+2. FFmpeg Android library 0.18.1
+   Project: https://github.com/yausername/youtubedl-android
+   License: GPL-3.0 for the packaged FFmpeg configuration. FFmpeg notices:
+   https://ffmpeg.org/legal.html
+
+3. OkHttp 4.12.0
+   Project: https://square.github.io/okhttp/
+   License: Apache License 2.0.
+
+4. jsoup 1.18.3
+   Project: https://jsoup.org/
+   License: MIT.
+
+5. Kotlin standard library and transitive dependencies
+   Project: https://kotlinlang.org/
+   License: Apache License 2.0.
+
+This application does not include cookies, login credentials, private tokens,
+or a mechanism to bypass DRM, paywalls, or access controls. The Android media
+runtime is used only for public URLs accepted by the app's public-network
+policy.

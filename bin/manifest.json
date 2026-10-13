@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "platform": "win32-x64",
+  "ytDlp": {
+    "file": "yt-dlp.exe",
+    "version": "2026.08.19",
+    "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+    "source": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe"
+  },
+  "ffmpeg": {
+    "file": "ffmpeg.exe",
+    "version": "N-127276-g8e9db1f152-20261010",
+    "sha256": "c11b14cf1675d80f8d21ff7b753c58d22b2928d8088d83f9a5a43d0d872e7038",
+    "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+    "archiveSha256": "64470b1b149813c6c6a6d090a9444cd8f3f59ce403ab6ef3b0c12b784295116f"
+  },
+  "ffprobe": {
+    "file": "ffprobe.exe",
+    "version": "N-127276-g8e9db1f152-20261010",
+    "sha256": "e54a99ca82cf87209924b7aa1c889e94dc51e83dc067024b0df45a3cb6589afd",
+    "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+    "archiveSha256": "64470b1b149813c6c6a6d090a9444cd8f3f59ce403ab6ef3b0c12b784295116f"
+  },
+  "deno": {
+    "file": "deno.exe",
+    "version": "2.9.7",
+    "sha256": "e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33",
+    "source": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip",
+    "archiveSha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238"
+  }
+}
