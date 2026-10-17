@@ -3,6 +3,7 @@ node_modules/
 dist/
 dist-bundled/
 dist-release/
+dist-v2/
 dist-self-contained/
 *.log
 .DS_Store

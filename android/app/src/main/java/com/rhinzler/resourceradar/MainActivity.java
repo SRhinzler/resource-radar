@@ -1,7 +1,6 @@
 package com.rhinzler.resourceradar;
 
 import android.Manifest;
-import android.app.Activity;
 import android.content.res.AssetManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -20,6 +19,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
+
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
@@ -31,7 +33,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Hosts the local Resource Radar UI and its production native service bridge. */
-public final class MainActivity extends Activity {
+public final class MainActivity extends ComponentActivity {
     private static final String LOCAL_ASSET_ORIGIN = "https://appassets.androidplatform.net/assets/";
     private static final int POST_NOTIFICATIONS_REQUEST = 7101;
     private static final int MAX_LAUNCH_TEXT_LENGTH = 4096;
@@ -57,6 +59,13 @@ public final class MainActivity extends Activity {
         webView.addJavascriptInterface(bridge, ResourceRadarBridge.JAVASCRIPT_INTERFACE_NAME);
         setContentView(webView);
         webView.loadUrl(LOCAL_ASSET_ORIGIN + "index.html");
+        // Lifecycle ownership removes this callback when the Activity is destroyed.
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleWebViewBack();
+            }
+        });
 
         // Permission denial is deliberately non-blocking.  The backend remains
         // responsible for the foreground-service notification if permission is not
@@ -70,6 +79,25 @@ public final class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleLaunchIntent(intent);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        UpdateManager.get(this).attach(this);
+        if (pageLoaded && webView != null) {
+            try {
+                webView.evaluateJavascript("window.resourceRadar && window.resourceRadar.__resume();", null);
+            } catch (RuntimeException ignored) {
+                // A dead renderer must not prevent the Activity from resuming.
+            }
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        UpdateManager.get(this).detach(this);
+        super.onPause();
     }
 
     private void configureWindow() {
@@ -229,17 +257,26 @@ public final class MainActivity extends Activity {
         }
     }
 
-    @Override
-    public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
+    private void handleWebViewBack() {
+        if (isFinishing() || isDestroyed()) {
+            return;
         }
+        if (webView != null && pageLoaded) {
+            try {
+                webView.evaluateJavascript("Boolean(window.resourceRadar && window.resourceRadar.__handleBack());", handled -> {
+                    if (!isFinishing() && !isDestroyed() && !"true".equals(handled)) finish();
+                });
+                return;
+            } catch (RuntimeException ignored) {
+                // No local navigation is possible after the renderer disappears.
+            }
+        }
+        finish();
     }
 
     @Override
     protected void onDestroy() {
+        UpdateManager.get(this).detach(this);
         if (bridge != null) {
             bridge.close();
         }
