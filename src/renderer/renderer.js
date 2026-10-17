@@ -1,8 +1,13 @@
 const api = window.resourceRadar;
 
 const state = {
+  theme: 'light',
+  view: 'home',
+  menuOpen: false,
   mode: 'empty',
   url: '',
+  urlHistory: [],
+  downloadHistory: [],
   directResources: [],
   selected: new Set(),
   platformResult: null,
@@ -14,10 +19,32 @@ const state = {
   currentItem: null,
   downloadResults: [],
   itemProgress: new Map(),
+  playlistFolderName: '',
+  updateCheckInProgress: false,
+  updateDownloading: false,
+  updateResult: null,
+  updateDownloadState: null,
+  updateCheckDismissed: false,
 };
+let updateCheckPromise = null;
+let updateReturnFocus = null;
+let updateAttempt = 0;
 
 const $ = (id) => document.getElementById(id);
 const els = {
+  menuToggle: $('menu-toggle'),
+  menuClose: $('menu-close'),
+  menuBackdrop: $('menu-backdrop'),
+  appMenu: $('app-menu'),
+  appContent: $('app-content'),
+  menuHome: $('menu-home'),
+  menuUrlHistory: $('menu-url-history'),
+  menuDownloadHistory: $('menu-download-history'),
+  menuTheme: $('menu-theme'),
+  menuCheckUpdates: $('menu-check-updates'),
+  homeView: $('home-view'),
+  urlHistoryView: $('url-history-view'),
+  downloadHistoryView: $('download-history-view'),
   url: $('url-input'),
   scan: $('scan-button'),
   clearUrl: $('clear-url'),
@@ -57,6 +84,30 @@ const els = {
   downloadLog: $('download-log'),
   cancelDownloads: $('cancel-downloads'),
   openDownloads: $('open-downloads'),
+  urlHistoryList: $('url-history-list'),
+  urlHistoryEmpty: $('url-history-empty'),
+  clearUrlHistory: $('clear-url-history'),
+  downloadHistoryList: $('download-history-list'),
+  downloadHistoryEmpty: $('download-history-empty'),
+  clearDownloadHistory: $('clear-download-history'),
+  playlistFolderLabel: $('playlist-folder-label'),
+  updateModal: $('update-modal'),
+  updateModalTitle: $('update-modal-title'),
+  updateClose: $('update-close'),
+  updateCloseAction: $('update-close-action'),
+  updateStatus: $('update-status'),
+  updateRelease: $('update-release'),
+  updateReleaseTag: $('update-release-tag'),
+  updateReleaseAsset: $('update-release-asset'),
+  updateReleaseTitle: $('update-release-title'),
+  updateReleaseBody: $('update-release-body'),
+  updateProgress: $('update-progress'),
+  updateProgressLabel: $('update-progress-label'),
+  updateProgressPercent: $('update-progress-percent'),
+  updateProgressFill: $('update-progress-fill'),
+  updateProgressTrack: $('update-progress-track'),
+  updateDownload: $('update-download'),
+  updateRecheck: $('update-recheck'),
 };
 
 function escapeHtml(value) {
@@ -73,6 +124,350 @@ function showMessage(text, kind = 'error') {
 function clearMessage() {
   els.message.textContent = '';
   els.message.className = 'message hidden';
+}
+
+function closeMenu() {
+  const restoreFocus = state.menuOpen && els.appMenu.contains(document.activeElement);
+  state.menuOpen = false;
+  els.appContent.inert = !els.updateModal.classList.contains('hidden');
+  if (restoreFocus && !els.appContent.inert) els.menuToggle.focus();
+  els.appMenu.inert = true;
+  els.appMenu.classList.remove('open');
+  els.menuBackdrop.classList.add('hidden');
+  els.appMenu.setAttribute('aria-hidden', 'true');
+  els.menuToggle.setAttribute('aria-expanded', 'false');
+}
+
+function openMenu() {
+  if (!els.updateModal.classList.contains('hidden')) return;
+  state.menuOpen = true;
+  els.appMenu.inert = false;
+  els.appMenu.classList.add('open');
+  els.menuBackdrop.classList.remove('hidden');
+  els.appMenu.setAttribute('aria-hidden', 'false');
+  els.menuToggle.setAttribute('aria-expanded', 'true');
+  (els.appMenu.querySelector('.menu-item.active') || els.menuClose).focus();
+  els.appContent.inert = true;
+}
+
+function setView(view) {
+  const nextView = ['home', 'url-history', 'download-history'].includes(view) ? view : 'home';
+  state.view = nextView;
+  els.homeView.classList.toggle('hidden', nextView !== 'home');
+  els.urlHistoryView.classList.toggle('hidden', nextView !== 'url-history');
+  els.downloadHistoryView.classList.toggle('hidden', nextView !== 'download-history');
+  [els.menuHome, els.menuUrlHistory, els.menuDownloadHistory].forEach((button) => {
+    button.classList.toggle('active', button.dataset.view === nextView);
+    if (button.dataset.view === nextView) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  closeMenu();
+  if (nextView !== 'home') loadHistory();
+  if (!els.appContent.inert) {
+    const focusTarget = nextView === 'home' ? els.url : $(`${nextView}-heading`);
+    focusTarget.focus();
+  }
+  window.scrollTo(0, 0);
+}
+
+function closeUpdateModal() {
+  if (els.updateModal.classList.contains('hidden')) return;
+  if (state.updateCheckInProgress) state.updateCheckDismissed = true;
+  els.updateModal.classList.add('hidden');
+  els.appContent.inert = false;
+  const returnTarget = updateReturnFocus?.isConnected && !updateReturnFocus.disabled
+    && !updateReturnFocus.closest('.hidden, [inert]') ? updateReturnFocus : els.menuToggle;
+  returnTarget.focus();
+}
+
+function trapOverlayFocus(event, container) {
+  if (event.key !== 'Tab') return;
+  const controls = [...container.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => element.getClientRects().length && !element.closest('[inert], .hidden'));
+  if (!controls.length) return;
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (!container.contains(document.activeElement) || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
+}
+
+function renderUpdateResult(result) {
+  state.updateResult = result;
+  renderUpdateDialog();
+}
+
+function renderUpdateDialog() {
+  const result = state.updateResult;
+  const status = result?.status || 'error';
+  const download = state.updateDownloadState;
+  const available = status === 'available' && Boolean(result.release);
+  state.updateDownloading = download?.phase === 'downloading';
+  els.updateRelease.classList.toggle('available', available);
+  els.updateRelease.classList.toggle('hidden', !result?.release);
+  els.updateProgress.classList.toggle('hidden', !download);
+  els.updateProgress.classList.toggle('finished', Boolean(download && !state.updateDownloading));
+  els.updateDownload.disabled = !available || state.updateCheckInProgress || state.updateDownloading || download?.phase === 'completed';
+  els.updateDownload.textContent = state.updateDownloading ? 'Downloading…'
+    : download?.phase === 'failed' ? 'Retry download' : download?.phase === 'completed' ? 'Installer opened' : 'Download update';
+  els.updateClose.disabled = false;
+  els.updateCloseAction.disabled = false;
+  els.updateRecheck.classList.toggle('hidden', state.updateDownloading || state.updateCheckInProgress);
+  els.updateRecheck.disabled = state.updateDownloading || state.updateCheckInProgress;
+
+  if (result?.release) {
+    els.updateReleaseTag.textContent = result.release.tagName || 'New release';
+    els.updateReleaseAsset.textContent = result.release.assetName
+      ? `${result.release.assetName}${result.release.assetSize ? ` · ${formatBytes(result.release.assetSize)}` : ''}`
+      : 'Windows installer';
+    els.updateReleaseTitle.textContent = result.release.title || result.release.tagName || 'Resource Radar update';
+    els.updateReleaseBody.textContent = result.release.body || 'No changelog was provided for this release.';
+  }
+
+  if (download) {
+    const percent = Number.isFinite(Number(download.percent)) ? Math.max(0, Math.min(100, Number(download.percent))) : 0;
+    els.updateProgressPercent.textContent = `${percent}%`;
+    els.updateProgressFill.style.width = `${percent}%`;
+    els.updateProgressTrack.setAttribute('aria-valuenow', String(percent));
+    if (state.updateDownloading) {
+      els.updateModalTitle.textContent = 'Downloading update';
+      els.updateStatus.textContent = 'You can close this dialog and keep using Resource Radar. The installer will open after the download checks finish.';
+      els.updateProgressLabel.textContent = `${formatBytes(download.receivedBytes || 0)} of ${formatBytes(download.totalBytes || result?.release?.assetSize || 0)}`;
+    } else if (download.phase === 'completed') {
+      els.updateModalTitle.textContent = 'Installer opened';
+      els.updateProgressLabel.textContent = download.digestVerified
+        ? 'SHA-256 verified; installer opened.' : 'Installer downloaded and opened.';
+      els.updateStatus.textContent = download.digestVerified
+        ? 'The SHA-256-verified installer was opened. Follow the Windows setup prompts to finish the update.'
+        : 'The installer was downloaded and opened. GitHub did not provide a SHA-256 digest for this asset. Follow the Windows setup prompts to finish the update.';
+    } else {
+      els.updateModalTitle.textContent = 'Update download failed';
+      els.updateProgressLabel.textContent = 'Download stopped';
+      els.updateStatus.textContent = download.error || 'The update could not be downloaded. You can retry.';
+    }
+    return;
+  }
+
+  if (status === 'checking') {
+    els.updateModalTitle.textContent = 'Check for updates';
+    els.updateStatus.textContent = 'Checking GitHub for the latest Resource Radar release…';
+    return;
+  }
+
+  if (available) {
+    els.updateModalTitle.textContent = 'Update available';
+    els.updateStatus.textContent = `Resource Radar ${result.currentVersion || ''} is installed. ${result.release.tagName || 'A newer release'} is ready.`;
+    return;
+  }
+
+  if (status === 'up-to-date') {
+    els.updateModalTitle.textContent = 'You’re up to date';
+    els.updateStatus.textContent = `Resource Radar ${result.currentVersion || ''} is installed. No newer stable release is available${result.latestVersion ? ` (latest: ${result.latestVersion})` : ''}.`;
+    return;
+  }
+
+  els.updateModalTitle.textContent = 'Update check unavailable';
+  els.updateStatus.textContent = result?.error || 'The latest release could not be checked right now. Try again later.';
+}
+
+function openUpdateModal(result = null) {
+  if (state.menuOpen) closeMenu();
+  const wasHidden = els.updateModal.classList.contains('hidden');
+  if (wasHidden) updateReturnFocus = document.activeElement;
+  els.updateModal.classList.remove('hidden');
+  if (result) renderUpdateResult(result);
+  else renderUpdateDialog();
+  if (wasHidden) els.updateClose.focus();
+  els.appContent.inert = true;
+}
+
+async function checkForUpdates(manual = false, force = false) {
+  if (state.updateDownloading || (state.updateDownloadState && !force)) {
+    if (manual) openUpdateModal();
+    return state.updateResult;
+  }
+  if (updateCheckPromise) {
+    if (manual) openUpdateModal();
+    return updateCheckPromise.catch(() => state.updateResult);
+  }
+
+  state.updateCheckInProgress = true;
+  state.updateCheckDismissed = false;
+  state.updateDownloadState = null;
+  renderUpdateResult({ status: 'checking' });
+  if (manual) openUpdateModal();
+  const pending = Promise.resolve().then(() => api.checkForUpdates());
+  updateCheckPromise = pending;
+  try {
+    const result = await pending;
+    if (result?.status === 'downloading') {
+      renderUpdateResult({ ...result, status: 'available' });
+      updateDownloadProgress(result.download || { type: 'update-download-started' });
+    } else {
+      renderUpdateResult(result);
+    }
+    if (!state.updateCheckDismissed && (manual || result?.status === 'available' || result?.status === 'downloading')) openUpdateModal();
+    return result;
+  } catch (error) {
+    const result = { status: 'error', error: error?.message || 'The update check could not be completed.' };
+    renderUpdateResult(result);
+    return result;
+  } finally {
+    state.updateCheckInProgress = false;
+    updateCheckPromise = null;
+    renderUpdateDialog();
+  }
+}
+
+async function startUpdateDownload() {
+  if (state.updateDownloading || state.updateCheckInProgress || state.updateResult?.status !== 'available'
+    || state.updateDownloadState?.phase === 'completed') return;
+  const attempt = ++updateAttempt;
+  updateDownloadProgress({ type: 'update-download-started' });
+  try {
+    const result = await api.downloadUpdate();
+    if (attempt === updateAttempt && state.updateDownloading) {
+      updateDownloadProgress({ type: 'update-download-complete', ...result });
+    }
+  } catch (error) {
+    if (attempt === updateAttempt && state.updateDownloading) {
+      updateDownloadProgress({ type: 'update-download-complete', ok: false, error: error?.message });
+    }
+  }
+}
+
+function updateDownloadProgress(event) {
+  if (event.type === 'update-download-started') {
+    state.updateDownloadState = {
+      phase: 'downloading',
+      receivedBytes: 0,
+      totalBytes: event.totalBytes || state.updateResult?.release?.assetSize || 0,
+      percent: 0,
+    };
+  } else if (event.type === 'update-download-progress') {
+    const total = Number(event.totalBytes);
+    const received = Number(event.receivedBytes);
+    const percent = Number.isFinite(Number(event.percent))
+      ? Math.max(0, Math.min(100, Number(event.percent)))
+      : (Number.isFinite(total) && total > 0 ? Math.round((received / total) * 100) : 0);
+    state.updateDownloadState = { phase: 'downloading', receivedBytes: received, totalBytes: total, percent };
+  } else if (event.type === 'update-download-complete') {
+    state.updateDownloadState = {
+      ...state.updateDownloadState,
+      phase: event.ok ? 'completed' : 'failed',
+      percent: event.ok ? 100 : state.updateDownloadState?.percent || 0,
+      digestVerified: Boolean(event.digestVerified),
+      error: event.error || 'The update could not be downloaded. You can retry.',
+    };
+    showMessage(event.ok
+      ? 'The update installer was opened. Follow the Windows setup prompts to finish.'
+      : `${state.updateDownloadState.error} Open Check for updates in the menu to retry.`, event.ok ? 'success' : 'error');
+  } else return;
+  renderUpdateDialog();
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === 'dark' ? 'dark' : 'light';
+  state.theme = nextTheme;
+  document.documentElement.dataset.theme = nextTheme;
+  els.menuTheme.innerHTML = `<span aria-hidden="true">${nextTheme === 'dark' ? '☀' : '☾'}</span> ${nextTheme === 'dark' ? 'Light mode' : 'Dark mode'}`;
+  els.menuTheme.setAttribute('aria-pressed', String(nextTheme === 'dark'));
+}
+
+function formatHistoryDate(value) {
+  const date = new Date(value || '');
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function playlistPathLabel(folderName) {
+  return folderName ? `Downloads\\Playlist\\${folderName}` : 'Downloads\\Playlist';
+}
+
+function renderUrlHistory(entries, errorMessage = '') {
+  state.urlHistory = Array.isArray(entries) ? entries : [];
+  els.urlHistoryList.textContent = '';
+  for (const entry of state.urlHistory) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'history-item';
+    button.dataset.url = entry.url || '';
+
+    const icon = document.createElement('span');
+    icon.className = 'history-icon';
+    icon.textContent = '↗';
+    icon.setAttribute('aria-hidden', 'true');
+
+    const content = document.createElement('span');
+    content.className = 'history-item-content';
+    const url = document.createElement('strong');
+    url.textContent = entry.url || 'Unknown URL';
+    const date = document.createElement('small');
+    date.textContent = formatHistoryDate(entry.visitedAt) || 'Previously scanned';
+    content.append(url, date);
+    button.append(icon, content);
+    els.urlHistoryList.append(button);
+  }
+
+  els.urlHistoryEmpty.textContent = errorMessage || 'No URLs scanned yet. Recent public URLs will appear here.';
+  els.urlHistoryEmpty.classList.toggle('history-error', Boolean(errorMessage));
+  els.urlHistoryEmpty.classList.toggle('hidden', state.urlHistory.length > 0 && !errorMessage);
+  els.clearUrlHistory.disabled = state.urlHistory.length === 0;
+}
+
+function renderDownloadHistory(entries, errorMessage = '') {
+  state.downloadHistory = Array.isArray(entries) ? entries : [];
+  els.downloadHistoryList.textContent = '';
+  for (const entry of state.downloadHistory) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `history-item download-history-item${entry.available ? '' : ' unavailable'}`;
+    button.dataset.downloadId = entry.id || '';
+    button.title = entry.available ? 'Open downloaded file' : 'File is no longer available';
+
+    const icon = document.createElement('span');
+    icon.className = 'history-icon download-history-icon';
+    icon.textContent = entry.available ? '↓' : '—';
+    icon.setAttribute('aria-hidden', 'true');
+
+    const content = document.createElement('span');
+    content.className = 'history-item-content';
+    const fileName = document.createElement('strong');
+    fileName.textContent = entry.fileName || 'Downloaded file';
+    const details = document.createElement('small');
+    const date = formatHistoryDate(entry.completedAt);
+    details.textContent = [entry.title, date].filter(Boolean).join(' · ') || 'Completed download';
+    content.append(fileName, details);
+
+    const status = document.createElement('span');
+    status.className = 'history-status';
+    status.textContent = entry.available ? 'Open' : 'Unavailable';
+    button.append(icon, content, status);
+    els.downloadHistoryList.append(button);
+  }
+
+  els.downloadHistoryEmpty.textContent = errorMessage || 'No completed downloads yet. Saved files will appear here.';
+  els.downloadHistoryEmpty.classList.toggle('history-error', Boolean(errorMessage));
+  els.downloadHistoryEmpty.classList.toggle('hidden', state.downloadHistory.length > 0 && !errorMessage);
+  els.clearDownloadHistory.disabled = state.downloadHistory.length === 0;
+}
+
+async function loadHistory() {
+  try {
+    const [urlHistory, downloadHistory] = await Promise.all([
+      api.getUrlHistory(),
+      api.getDownloadHistory(),
+    ]);
+    renderUrlHistory(urlHistory?.entries, urlHistory?.error || '');
+    renderDownloadHistory(downloadHistory?.entries, downloadHistory?.error || '');
+    if (urlHistory?.error || downloadHistory?.error) {
+      showMessage(urlHistory?.error || downloadHistory?.error, 'error');
+    }
+  } catch {
+    renderUrlHistory([], 'History could not be loaded on this PC.');
+    renderDownloadHistory([], 'History could not be loaded on this PC.');
+  }
 }
 
 function setBusy(busy, label = 'Working…') {
@@ -250,9 +645,13 @@ function renderPlaylistResults(playlist) {
   resetResults();
   state.mode = 'playlist';
   state.platformResult = { mode: 'playlist', playlist };
+  state.playlistFolderName = playlist.playlistFolderName || '';
   els.playlistTitle.textContent = playlist.title || 'YouTube playlist';
   els.playlistUploader.textContent = playlist.uploader ? `By ${playlist.uploader}` : 'Sorted oldest first by upload date';
   els.playlistCount.textContent = String(playlist.availableCount ?? (playlist.entries || []).filter((entry) => entry.available).length);
+  els.playlistFolderLabel.textContent = state.playlistFolderName
+    ? playlistPathLabel(state.playlistFolderName)
+    : playlistPathLabel('');
   addResolutionOptions(els.playlistResolution, playlist.resolutions || []);
   els.playlistList.innerHTML = (playlist.entries || []).map((entry) => `
     <tr class="${entry.available ? '' : 'unavailable-row'}">
@@ -273,6 +672,7 @@ function showProgress(title, total, downloadDirectory) {
   state.itemProgress = new Map();
   state.jobMode = 'direct';
   state.downloadDirectory = downloadDirectory || '';
+  state.playlistFolderName = state.platformResult?.playlist?.playlistFolderName || '';
   els.progressTitle.textContent = title;
   els.progressLabel.textContent = total ? `Preparing 0 of ${total}` : 'Preparing playlist…';
   setAggregateProgress(0, false);
@@ -338,6 +738,15 @@ async function scanUrl() {
   clearMessage();
   state.url = rawUrl;
   state.jobId = '';
+  try {
+    const history = await api.rememberUrl(rawUrl);
+    renderUrlHistory(history?.entries, history?.error || '');
+    if (history?.error) showMessage(history.error, 'error');
+  } catch {
+    // A history write should not prevent a public page from being scanned.
+    renderUrlHistory(state.urlHistory, 'This URL could not be saved to history.');
+    showMessage('This URL could not be saved to history, but the scan will continue.', 'error');
+  }
   setBusy(true, 'Scanning…');
   resetResults();
   setVisible(els.empty, true);
@@ -431,6 +840,7 @@ function updateProgress(event) {
     state.jobId = event.jobId;
     state.jobMode = event.mode || 'direct';
     state.downloadDirectory = event.downloadDirectory || '';
+    state.playlistFolderName = event.playlistFolderName || state.playlistFolderName;
     if (event.total) state.jobTotal = event.total;
     state.itemProgress = new Map();
     setAggregateProgress(0, false);
@@ -448,7 +858,12 @@ function updateProgress(event) {
 
   if (event.type === 'playlist-ready') {
     state.jobTotal = event.total;
+    state.downloadDirectory = event.downloadDirectory || state.downloadDirectory;
+    state.playlistFolderName = event.playlistFolderName || state.playlistFolderName;
     els.progressLabel.textContent = `Ready · 0 of ${event.total}`;
+    els.progressDetail.textContent = event.downloadDirectory
+      ? `Saving to ${event.downloadDirectory}`
+      : 'Saving the playlist one video at a time.';
     setAggregateProgress(0, false);
     return;
   }
@@ -528,7 +943,10 @@ function updateProgress(event) {
         setAggregateProgress(null, false);
       }
     }
-    const savedDirectory = state.downloadDirectory || (state.jobMode === 'playlist' ? 'Downloads\\Playlist' : 'Downloads');
+    const fallbackPlaylistDirectory = state.playlistFolderName
+      ? playlistPathLabel(state.playlistFolderName)
+      : playlistPathLabel('');
+    const savedDirectory = state.downloadDirectory || (state.jobMode === 'playlist' ? fallbackPlaylistDirectory : 'Downloads');
     els.progressDetail.textContent = failures
       ? `${successes} saved · ${failures} failed · ${savedDirectory}`
       : `${successes} file${successes === 1 ? '' : 's'} saved to ${savedDirectory}.`;
@@ -536,11 +954,57 @@ function updateProgress(event) {
     els.cancelDownloads.classList.add('hidden');
     hideResultActions(false);
     if (failures) showMessage(`${successes} saved, ${failures} could not be downloaded. See the queue details below.`, 'error');
-    else if (!event.canceled) showMessage(`${successes} file${successes === 1 ? '' : 's'} saved to your ${state.jobMode === 'playlist' ? 'Downloads\\Playlist' : 'Downloads'} folder.`, 'success');
+    else if (!event.canceled) {
+      const folderLabel = state.jobMode === 'playlist' && state.playlistFolderName
+        ? playlistPathLabel(state.playlistFolderName)
+        : 'Downloads';
+      showMessage(`${successes} file${successes === 1 ? '' : 's'} saved to your ${folderLabel} folder.`, 'success');
+    }
+    if (successes) loadHistory();
   }
 }
 
 function bindEvents() {
+  els.menuToggle.addEventListener('click', () => {
+    if (state.menuOpen) closeMenu();
+    else openMenu();
+  });
+  els.menuClose.addEventListener('click', closeMenu);
+  els.menuBackdrop.addEventListener('click', closeMenu);
+  document.querySelectorAll('[data-view]').forEach((button) => {
+    button.addEventListener('click', () => setView(button.dataset.view));
+  });
+  els.menuTheme.addEventListener('click', async () => {
+    const nextTheme = state.theme === 'dark' ? 'light' : 'dark';
+    els.menuTheme.disabled = true;
+    try {
+      const result = await api.setTheme(nextTheme);
+      applyTheme(result?.theme || nextTheme);
+      if (result?.error) showMessage(result.error, 'error');
+    } catch (error) {
+      showMessage(error?.message || 'The appearance setting could not be saved.', 'error');
+    } finally {
+      els.menuTheme.disabled = false;
+    }
+  });
+  els.menuCheckUpdates.addEventListener('click', () => {
+    closeMenu();
+    checkForUpdates(true);
+  });
+  els.updateClose.addEventListener('click', closeUpdateModal);
+  els.updateCloseAction.addEventListener('click', closeUpdateModal);
+  els.updateDownload.addEventListener('click', startUpdateDownload);
+  els.updateRecheck.addEventListener('click', () => checkForUpdates(true, true));
+  document.addEventListener('keydown', (event) => {
+    const modalOpen = !els.updateModal.classList.contains('hidden');
+    if (event.key === 'Escape') {
+      if (modalOpen) closeUpdateModal();
+      else if (state.menuOpen) closeMenu();
+      return;
+    }
+    if (modalOpen) trapOverlayFocus(event, els.updateModal);
+    else if (state.menuOpen) trapOverlayFocus(event, els.appMenu);
+  });
   els.scan.addEventListener('click', scanUrl);
   els.url.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') scanUrl();
@@ -573,13 +1037,70 @@ function bindEvents() {
   els.downloadSelected.addEventListener('click', startDirectDownload);
   els.downloadVideo.addEventListener('click', startVideoDownload);
   els.downloadPlaylist.addEventListener('click', startPlaylistDownload);
+  els.urlHistoryList.addEventListener('click', (event) => {
+    const item = event.target.closest('button[data-url]');
+    if (!item) return;
+    setView('home');
+    els.url.value = item.dataset.url || '';
+    els.clearUrl.classList.toggle('hidden', !els.url.value);
+    els.url.focus();
+    showMessage('URL restored. Scan it when you are ready.', 'success');
+  });
+  els.clearUrlHistory.addEventListener('click', async () => {
+    els.clearUrlHistory.disabled = true;
+    try {
+      const result = await api.clearUrlHistory();
+      renderUrlHistory(result?.entries, result?.error || '');
+    } catch {
+      renderUrlHistory(state.urlHistory, 'URL history could not be cleared.');
+      showMessage('URL history could not be cleared.', 'error');
+    }
+  });
+  els.downloadHistoryList.addEventListener('click', async (event) => {
+    const item = event.target.closest('button[data-download-id]');
+    if (!item) return;
+    const entry = state.downloadHistory.find((candidate) => candidate.id === item.dataset.downloadId);
+    let result;
+    try {
+      result = await api.openDownloadFile(item.dataset.downloadId);
+    } catch (error) {
+      showMessage(error?.message || 'The downloaded file could not be opened.', 'error');
+      return;
+    }
+    if (!result?.ok) {
+      if (entry) entry.available = false;
+      renderDownloadHistory(state.downloadHistory, result?.error || 'The downloaded file could not be opened.');
+      showMessage(result?.error || 'The downloaded file could not be opened.', 'error');
+      return;
+    }
+    showMessage(`Opening ${entry?.fileName || 'the downloaded file'}.`, 'success');
+  });
+  els.clearDownloadHistory.addEventListener('click', async () => {
+    els.clearDownloadHistory.disabled = true;
+    try {
+      const result = await api.clearDownloadHistory();
+      renderDownloadHistory(result?.entries, result?.error || '');
+    } catch {
+      renderDownloadHistory(state.downloadHistory, 'Download history could not be cleared.');
+      showMessage('Download history could not be cleared.', 'error');
+    }
+  });
   els.cancelDownloads.addEventListener('click', async () => {
     if (!state.jobId) return;
     els.cancelDownloads.disabled = true;
     await api.cancelDownloads(state.jobId);
   });
-  els.openDownloads.addEventListener('click', () => api.openDownloads());
-  els.progressOpenFolder.addEventListener('click', () => api.openDownloads(state.jobMode === 'playlist' ? 'playlist' : undefined));
+  els.openDownloads.addEventListener('click', async () => {
+    const result = await api.openDownloads();
+    if (!result?.ok) showMessage(result?.error || 'The Downloads folder could not be opened.', 'error');
+  });
+  els.progressOpenFolder.addEventListener('click', async () => {
+    const destination = state.jobMode === 'playlist' && state.playlistFolderName
+      ? { kind: 'playlist', name: state.playlistFolderName }
+      : undefined;
+    const result = await api.openDownloads(destination);
+    if (!result?.ok) showMessage(result?.error || 'The download folder could not be opened.', 'error');
+  });
   els.videoResolution.addEventListener('change', () => {
     const value = els.videoResolution.value;
     els.videoQualitySummary.textContent = value ? `Up to ${value}p` : `Up to ${state.platformResult?.media?.resolutions?.[0] || 'best'}p`;
@@ -587,11 +1108,26 @@ function bindEvents() {
 }
 
 api.onDownloadEvent(updateProgress);
+api.onUpdateEvent(updateDownloadProgress);
 bindEvents();
 els.clearUrl.classList.add('hidden');
+applyTheme('light');
+setView('home');
+
+loadHistory();
+
+api.getPreferences().then((preferences) => {
+  applyTheme(preferences?.theme || 'light');
+  if (preferences?.error) showMessage(preferences.error, 'error');
+}).catch(() => {
+  showMessage('The appearance setting could not be loaded.', 'error');
+});
 
 api.getMediaToolStatus().then((status) => {
   if (!status.ready) {
     showMessage('The bundled media tools are missing or damaged. Please reinstall Resource Radar; no separate applications are required.', 'error');
   }
 }).catch(() => {});
+
+// The automatic check is deliberately fire-and-forget so opening the scanner never waits on GitHub.
+checkForUpdates(false).catch(() => {});

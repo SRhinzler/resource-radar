@@ -12,12 +12,36 @@
   </head>
   <body>
     <div class="app-shell">
+      <div class="menu-backdrop hidden" id="menu-backdrop"></div>
+      <aside class="app-menu" id="app-menu" role="dialog" aria-modal="true" aria-labelledby="menu-heading" aria-hidden="true" inert>
+        <div class="menu-header">
+          <div>
+            <p class="section-kicker">RESOURCE RADAR</p>
+            <h2 id="menu-heading">Menu</h2>
+          </div>
+          <button class="icon-button menu-close" id="menu-close" type="button" aria-label="Close menu">×</button>
+        </div>
+        <nav class="menu-nav" aria-label="Resource Radar navigation">
+          <button class="menu-item active" id="menu-home" data-view="home" type="button"><span aria-hidden="true">⌂</span> Scanner</button>
+          <button class="menu-item" id="menu-url-history" data-view="url-history" type="button"><span aria-hidden="true">↗</span> URL history</button>
+          <button class="menu-item" id="menu-download-history" data-view="download-history" type="button"><span aria-hidden="true">↓</span> Download history</button>
+        </nav>
+        <div class="menu-divider"></div>
+        <div class="menu-actions">
+          <button class="menu-item" id="menu-theme" type="button" aria-pressed="false"><span aria-hidden="true">☾</span> Dark mode</button>
+          <button class="menu-item" id="menu-check-updates" type="button"><span aria-hidden="true">↻</span> Check for updates</button>
+        </div>
+      </aside>
+      <div id="app-content">
       <header class="topbar">
-        <div class="brand-lockup">
+        <div class="topbar-leading">
+          <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Open menu" aria-controls="app-menu" aria-haspopup="dialog" aria-expanded="false">☰</button>
+          <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
           <div>
             <p class="eyebrow">PUBLIC RESOURCE DOWNLOADER</p>
             <h1>Resource Radar</h1>
+          </div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -27,7 +51,9 @@
       </header>
 
       <main>
-        <section class="hero-card">
+        <div id="global-message" class="message hidden" role="status"></div>
+        <div id="home-view" class="app-view">
+          <section class="hero-card">
           <div class="hero-copy">
             <p class="section-kicker">START WITH A URL</p>
             <h2>Find the files worth keeping.</h2>
@@ -49,9 +75,7 @@
             <span class="hint-separator">•</span>
             <span>YouTube · Dailymotion · LinkedIn · Instagram</span>
           </div>
-        </section>
-
-        <div id="global-message" class="message hidden" role="status"></div>
+          </section>
 
         <section id="empty-state" class="empty-state">
           <div class="empty-illustration" aria-hidden="true">
@@ -135,7 +159,7 @@
               <label class="field-label" for="playlist-resolution">Maximum resolution for every video</label>
               <select class="select-input compact-select" id="playlist-resolution"></select>
             </div>
-            <div class="sequence-note"><span class="sequence-number">1</span><span>Saved to <strong>Downloads\Playlist</strong>, one at a time with <strong>1. 2. 3.</strong> filename prefixes.</span></div>
+            <div class="sequence-note"><span class="sequence-number">1</span><span>Saved to <strong id="playlist-folder-label">Downloads\playlist folder</strong>, one at a time with <strong>1. 2. 3.</strong> filename prefixes.</span></div>
             <button class="primary-button" id="download-playlist" type="button"><span class="button-icon">↓</span> Download playlist</button>
           </div>
           <div class="playlist-table-wrap">
@@ -148,7 +172,7 @@
           </div>
         </section>
 
-        <section id="progress-card" class="progress-card hidden">
+          <section id="progress-card" class="progress-card hidden">
           <div class="progress-header">
             <div>
               <p class="section-kicker">DOWNLOAD QUEUE</p>
@@ -160,13 +184,84 @@
           <div class="progress-track" id="progress-track" role="progressbar" aria-label="Download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="progress-fill"></div></div>
           <div class="progress-detail"><span id="progress-detail">Your files are saved to Downloads.</span><button class="text-button hidden" id="progress-open-folder" type="button">Open folder</button></div>
           <div class="download-log" id="download-log"></div>
+          </section>
+        </div>
+
+        <section id="url-history-view" class="app-view page-view hidden" aria-labelledby="url-history-heading">
+          <div class="page-heading">
+            <button class="back-button" data-view="home" type="button">← Scanner</button>
+            <p class="section-kicker">RECENT INPUTS</p>
+            <h2 id="url-history-heading" tabindex="-1">URL history</h2>
+            <p>Restore a public URL to the scanner or clear your saved scan history.</p>
+          </div>
+          <section class="history-card history-page-card">
+            <div class="history-header">
+              <div>
+                <p class="section-kicker">SAVED ON THIS PC</p>
+                <h3>Recently scanned URLs</h3>
+              </div>
+              <button class="text-button" id="clear-url-history" type="button" disabled>Clear history</button>
+            </div>
+            <div id="url-history-list" class="history-list"></div>
+            <div id="url-history-empty" class="history-empty">No URLs scanned yet. Recent public URLs will appear here.</div>
+          </section>
+        </section>
+
+        <section id="download-history-view" class="app-view page-view hidden" aria-labelledby="download-history-heading">
+          <div class="page-heading">
+            <button class="back-button" data-view="home" type="button">← Scanner</button>
+            <p class="section-kicker">COMPLETED FILES</p>
+            <h2 id="download-history-heading" tabindex="-1">Download history</h2>
+            <p>Open completed files that are still available in your Downloads folder.</p>
+          </div>
+          <section class="history-card history-page-card">
+            <div class="history-header">
+              <div>
+                <p class="section-kicker">SAVED ON THIS PC</p>
+                <h3>Completed downloads</h3>
+              </div>
+              <button class="text-button" id="clear-download-history" type="button" disabled>Clear history</button>
+            </div>
+            <div id="download-history-list" class="history-list"></div>
+            <div id="download-history-empty" class="history-empty">No completed downloads yet. Saved files will appear here.</div>
+          </section>
         </section>
       </main>
 
       <footer class="footer-note">
         <span><span class="shield-icon">◆</span> Public resources only. No sign-in, cookies, DRM bypass, or paywall circumvention.</span>
-        <span>v1.0 · Resource Radar</span>
+        <span>v2.0 · Resource Radar</span>
       </footer>
+      </div>
+    </div>
+    <div class="modal-backdrop hidden" id="update-modal" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
+      <section class="update-dialog">
+        <div class="update-dialog-header">
+          <div>
+            <p class="section-kicker">DESKTOP UPDATE</p>
+            <h2 id="update-modal-title">Check for updates</h2>
+          </div>
+          <button class="icon-button" id="update-close" type="button" aria-label="Close update dialog">×</button>
+        </div>
+        <p class="update-status" id="update-status" role="status">Checking GitHub for the latest Resource Radar release…</p>
+        <div class="update-release hidden" id="update-release">
+          <div class="update-release-meta">
+            <span class="update-tag" id="update-release-tag"></span>
+            <span class="muted-text" id="update-release-asset"></span>
+          </div>
+          <h3 id="update-release-title"></h3>
+          <pre class="update-body" id="update-release-body"></pre>
+        </div>
+        <div class="update-progress hidden" id="update-progress">
+          <div class="progress-summary"><span id="update-progress-label">Downloading installer…</span><strong id="update-progress-percent">0%</strong></div>
+          <div class="progress-track" id="update-progress-track" role="progressbar" aria-label="Update download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="update-progress-fill"></div></div>
+        </div>
+        <div class="update-actions">
+          <button class="secondary-button hidden" id="update-recheck" type="button">Check again</button>
+          <button class="secondary-button" id="update-close-action" type="button">Close</button>
+          <button class="primary-button" id="update-download" type="button" disabled>Download update</button>
+        </div>
+      </section>
     </div>
     <script src="./renderer.js"></script>
   </body>

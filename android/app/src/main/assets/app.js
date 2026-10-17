@@ -5,6 +5,9 @@
     const MAX_PENDING_REQUESTS = 32;
     const MAX_URL_LENGTH = 4096;
     const MAX_DIRECT_RESOURCES = 80;
+    const MAX_URL_HISTORY = 20;
+    const URL_HISTORY_KEY = 'resource-radar.url-history.v1';
+    const THEME_KEY = 'resource-radar.theme.v1';
     const pendingRequests = new Map();
     let requestSequence = 0;
 
@@ -18,17 +21,36 @@
         activeJob: null,
         jobMode: 'direct',
         destination: 'downloads',
+        destinationFolder: '',
+        urlHistory: [],
+        urlHistoryError: '',
+        downloadHistory: [],
+        downloadHistoryLoading: true,
+        downloadHistoryError: '',
+        route: 'home',
+        routeHistory: [],
+        updateCheckInFlight: false,
+        updateManualRequested: false,
+        updateDownloadInFlight: false,
+        updateStatusInFlight: false,
+        updateRelease: null,
+        updateStatus: null,
+        updatePollTimer: null,
     };
 
     const $ = (id) => document.getElementById(id);
     const els = {
         form: $('scan-form'), url: $('url-input'), clearUrl: $('clear-url'), scan: $('scan-button'),
         message: $('global-message'), serviceTitle: $('service-title'), serviceMessage: $('service-message'), serviceStatus: $('service-status'),
-        empty: $('empty-state'), direct: $('direct-results'), directCount: $('direct-count'), directPageUrl: $('direct-page-url'), directList: $('direct-list'), directEmpty: $('direct-empty'),
+        homeView: $('home-view'), urlHistoryView: $('url-history-view'), downloadHistoryView: $('download-history-view'), empty: $('empty-state'), direct: $('direct-results'), directCount: $('direct-count'), directPageUrl: $('direct-page-url'), directList: $('direct-list'), directEmpty: $('direct-empty'),
         selectAll: $('select-all'), downloadSelected: $('download-selected'), video: $('video-results'), videoPlatformIcon: $('video-platform-icon'), videoPlatformName: $('video-platform-name'), videoTitle: $('video-title'), videoUploader: $('video-uploader'), videoMeta: $('video-meta'), videoQualitySummary: $('video-quality-summary'), videoResolution: $('video-resolution'), downloadVideo: $('download-video'),
-        playlist: $('playlist-results'), playlistTitle: $('playlist-title'), playlistUploader: $('playlist-uploader'), playlistCount: $('playlist-count'), playlistResolution: $('playlist-resolution'), playlistList: $('playlist-list'), downloadPlaylist: $('download-playlist'),
+         playlist: $('playlist-results'), playlistTitle: $('playlist-title'), playlistUploader: $('playlist-uploader'), playlistCount: $('playlist-count'), playlistResolution: $('playlist-resolution'), playlistList: $('playlist-list'), playlistFolderNote: $('playlist-folder-note'), downloadPlaylist: $('download-playlist'),
         progress: $('progress-card'), progressTitle: $('progress-title'), progressLabel: $('progress-label'), progressPercent: $('progress-percent'), progressTrack: $('progress-track'), progressFill: $('progress-fill'), progressDetail: $('progress-detail'), progressOpenFolder: $('progress-open-folder'), downloadLog: $('download-log'), cancelDownloads: $('cancel-downloads'), openDownloads: $('open-downloads'),
-        about: $('about-button'), aboutPanel: $('about-panel'), aboutClose: $('about-close'), notices: $('notices-copy'),
+        menuToggle: $('menu-toggle'), menu: $('app-menu'), menuBackdrop: $('menu-backdrop'), menuClose: $('menu-close'), menuHome: $('menu-home'), menuUrlHistory: $('menu-url-history'), menuDownloadHistory: $('menu-download-history'), menuCheckUpdates: $('menu-check-updates'), menuUpdateStatus: $('menu-update-status'), themeToggle: $('theme-toggle'), themeToggleLabel: $('theme-toggle-label'), about: $('about-button'), aboutPanel: $('about-panel'), aboutClose: $('about-close'), notices: $('notices-copy'),
+        urlHistoryList: $('url-history-list'), urlHistoryEmpty: $('url-history-empty'), urlHistoryError: $('url-history-error'), clearUrlHistory: $('clear-url-history'),
+        downloadHistoryList: $('download-history-list'), downloadHistoryEmpty: $('download-history-empty'), downloadHistoryError: $('download-history-error'), clearDownloadHistory: $('clear-download-history'),
+        urlHistoryBack: $('url-history-back'), urlHistoryHome: $('url-history-home'), downloadHistoryBack: $('download-history-back'), downloadHistoryHome: $('download-history-home'),
+        updatePanel: $('update-panel'), updateKicker: $('update-kicker'), updateTitle: $('update-title'), updateMessage: $('update-message'), updateReleaseMeta: $('update-release-meta'), updateBody: $('update-body'), updateDownload: $('update-download'), updateSettings: $('update-settings'), updateRetry: $('update-retry'), updateClose: $('update-close'),
     };
 
     function escapeHtml(value) {
@@ -37,6 +59,10 @@
 
     function textValue(value, fallback) {
         return typeof value === 'string' && value.trim() ? value : fallback;
+    }
+
+    function playlistPathLabel(folderName) {
+        return folderName ? 'Downloads/Playlist/' + folderName : 'Downloads/Playlist';
     }
 
     function finiteNumber(value) {
@@ -108,7 +134,14 @@
         downloadResources: (resources) => invoke('downloadResources', resources),
         downloadPlatformMedia: (request) => invoke('downloadPlatformMedia', request),
         cancelDownloads: (jobId) => invoke('cancelDownloads', jobId),
-        openDownloads: (destination) => invoke('openDownloads', destination || 'downloads'),
+         openDownloads: (destination) => invoke('openDownloads', destination || 'downloads'),
+         getDownloadHistory: () => invoke('getDownloadHistory', null),
+         clearDownloadHistory: () => invoke('clearDownloadHistory', null),
+         openDownload: (historyId) => invoke('openDownload', historyId),
+         checkForUpdates: () => invoke('checkForUpdates', null),
+         getUpdateStatus: () => invoke('getUpdateStatus', null),
+         downloadUpdate: () => invoke('downloadUpdate', null),
+         openUpdateInstallSettings: () => invoke('openUpdateInstallSettings', null),
         onDownloadEvent: (callback) => {
             downloadEventHandler = typeof callback === 'function' ? callback : null;
             let result;
@@ -134,10 +167,13 @@
         },
         __receiveLaunchUrl: (url) => {
             if (typeof url !== 'string' || url.length > MAX_URL_LENGTH || !/^https:\/\//i.test(url)) return;
+            goHome();
             els.url.value = url;
             els.clearUrl.classList.remove('hidden');
             scanUrl();
         },
+        __handleBack: () => handleBack(),
+        __resume: () => refreshUpdateStatus(true),
     };
 
     function showMessage(text, kind) {
@@ -156,6 +192,461 @@
 
     function setVisible(element, visible) {
         element.classList.toggle('hidden', !visible);
+    }
+
+    function normalizeRoute(value) {
+        return value === 'url-history' || value === 'download-history' ? value : 'home';
+    }
+
+    function routeFromLocation() {
+        const hash = typeof window.location.hash === 'string' ? window.location.hash.slice(1) : '';
+        return normalizeRoute(hash);
+    }
+
+    function closeMenu() {
+        setVisible(els.menu, false);
+        els.menuToggle.setAttribute('aria-expanded', 'false');
+    }
+
+    function openMenu() {
+        setVisible(els.menu, true);
+        els.menuToggle.setAttribute('aria-expanded', 'true');
+    }
+
+    function renderRoute(route) {
+        state.route = normalizeRoute(route);
+        setVisible(els.homeView, state.route === 'home');
+        setVisible(els.urlHistoryView, state.route === 'url-history');
+        setVisible(els.downloadHistoryView, state.route === 'download-history');
+        closeMenu();
+        if (state.route === 'download-history') loadDownloadHistory();
+        if (state.route === 'url-history') renderUrlHistory();
+    }
+
+    function navigate(route, push) {
+        const target = normalizeRoute(route);
+        if (push && target !== state.route) state.routeHistory.push(state.route);
+        if (state.routeHistory.length > 20) state.routeHistory.shift();
+        try { window.history.replaceState({ route: target }, '', '#' + target); } catch (error) { /* The local view still works without browser history. */ }
+        renderRoute(target);
+    }
+
+    function goHome() {
+        state.routeHistory.length = 0;
+        navigate('home', false);
+    }
+
+    function goBackFromPage() {
+        navigate(state.routeHistory.pop() || 'home', false);
+    }
+
+    function handleBack() {
+        if (!els.menu.classList.contains('hidden')) { closeMenu(); return true; }
+        if (!els.updatePanel.classList.contains('hidden')) { hideUpdatePanel(); return true; }
+        if (!els.aboutPanel.classList.contains('hidden')) { setVisible(els.aboutPanel, false); return true; }
+        if (state.route !== 'home') { goBackFromPage(); return true; }
+        return false;
+    }
+
+    function storageValue(key) {
+        try {
+            return window.localStorage.getItem(key);
+        } catch (error) {
+            if (key === URL_HISTORY_KEY) state.urlHistoryError = 'Persistent URL history is unavailable in this WebView.';
+            return null;
+        }
+    }
+
+    function saveStorageValue(key, value) {
+        try {
+            window.localStorage.setItem(key, value);
+            return true;
+        } catch (error) {
+            if (key === URL_HISTORY_KEY) state.urlHistoryError = 'Persistent URL history could not be saved.';
+            if (key === THEME_KEY) showMessage('The theme changed for this session but could not be saved.', 'error');
+            return false;
+        }
+    }
+
+    function isRestorableUrl(value) {
+        if (typeof value !== 'string' || !value.trim() || value.length > MAX_URL_LENGTH) return false;
+        try {
+            const parsed = new URL(value.trim());
+            return parsed.protocol.toLowerCase() === 'https:' && !parsed.username && !parsed.password && Boolean(parsed.hostname);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function renderUrlHistory() {
+        const entries = Array.isArray(state.urlHistory) ? state.urlHistory : [];
+        els.urlHistoryList.innerHTML = entries.map((url, index) => '<button type="button" class="history-item" data-history-index="' + index + '" aria-label="Restore ' + escapeHtml(url) + '"><span class="history-item-icon" aria-hidden="true">↗</span><span class="history-item-copy"><strong>' + escapeHtml(url) + '</strong><small>Tap to restore this URL</small></span><span class="history-item-status ready">Restore</span></button>').join('');
+        setVisible(els.urlHistoryEmpty, entries.length === 0 && !state.urlHistoryError);
+        setVisible(els.urlHistoryError, Boolean(state.urlHistoryError));
+        els.urlHistoryError.textContent = state.urlHistoryError || '';
+        els.clearUrlHistory.disabled = entries.length === 0;
+    }
+
+    function loadUrlHistory() {
+        const raw = storageValue(URL_HISTORY_KEY);
+        if (raw === null) {
+            renderUrlHistory();
+            return;
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            state.urlHistory = Array.isArray(parsed) ? parsed.filter(isRestorableUrl).map((url) => url.trim()).slice(0, MAX_URL_HISTORY) : [];
+        } catch (error) {
+            state.urlHistory = [];
+            state.urlHistoryError = 'Saved URL history could not be read.';
+        }
+        renderUrlHistory();
+    }
+
+    function rememberUrl(url) {
+        if (!isRestorableUrl(url)) return;
+        const normalized = url.trim();
+        state.urlHistory = [normalized].concat(state.urlHistory.filter((entry) => entry !== normalized)).slice(0, MAX_URL_HISTORY);
+        saveStorageValue(URL_HISTORY_KEY, JSON.stringify(state.urlHistory));
+        renderUrlHistory();
+    }
+
+    function clearUrlHistory() {
+        state.urlHistory = [];
+        state.urlHistoryError = '';
+        if (saveStorageValue(URL_HISTORY_KEY, '[]')) {
+            renderUrlHistory();
+            showMessage('URL history cleared.', 'info');
+        } else {
+            renderUrlHistory();
+        }
+    }
+
+    function applyTheme(dark) {
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        els.themeToggle.setAttribute('aria-pressed', dark ? 'true' : 'false');
+        els.themeToggle.querySelector('.menu-link-icon').textContent = dark ? '☀' : '☾';
+        els.themeToggleLabel.textContent = dark ? 'Light mode' : 'Dark mode';
+    }
+
+    function loadTheme() {
+        applyTheme(storageValue(THEME_KEY) === 'dark');
+    }
+
+    function toggleTheme() {
+        const dark = document.documentElement.dataset.theme !== 'dark';
+        applyTheme(dark);
+        saveStorageValue(THEME_KEY, dark ? 'dark' : 'light');
+    }
+
+    function formatHistoryDate(value) {
+        const timestamp = finiteNumber(value);
+        if (timestamp === null || timestamp <= 0) return 'Completed download';
+        try {
+            return new Date(timestamp).toLocaleString();
+        } catch (error) {
+            return 'Completed download';
+        }
+    }
+
+    function renderDownloadHistory() {
+        const entries = Array.isArray(state.downloadHistory) ? state.downloadHistory : [];
+        els.downloadHistoryList.innerHTML = entries.map((entry) => {
+            const id = textValue(entry && entry.id, '');
+            const name = textValue(entry && entry.displayName, 'Downloaded file');
+            const folder = textValue(entry && entry.relativePath, 'Downloads/').replace(/^Download\//i, 'Downloads/');
+            const available = entry && entry.available !== false;
+            return '<button type="button" class="history-item" data-download-history-id="' + escapeHtml(id) + '" aria-label="Open ' + escapeHtml(name) + '"><span class="history-item-icon" aria-hidden="true">↓</span><span class="history-item-copy"><strong>' + escapeHtml(name) + '</strong><small>' + escapeHtml(folder) + ' · ' + escapeHtml(formatBytes(entry && entry.size)) + ' · ' + escapeHtml(formatHistoryDate(entry && entry.completedAt)) + '</small></span><span class="history-item-status ' + (available ? 'ready' : 'missing') + '">' + (available ? 'Open' : 'Missing') + '</span></button>';
+        }).join('');
+        const loading = state.downloadHistoryLoading;
+        setVisible(els.downloadHistoryEmpty, loading || (entries.length === 0 && !state.downloadHistoryError));
+        els.downloadHistoryEmpty.textContent = loading ? 'Loading completed downloads…' : 'Completed MediaStore downloads will appear here.';
+        setVisible(els.downloadHistoryError, Boolean(state.downloadHistoryError));
+        els.downloadHistoryError.textContent = state.downloadHistoryError || '';
+        els.clearDownloadHistory.disabled = loading || entries.length === 0;
+    }
+
+    async function loadDownloadHistory() {
+        state.downloadHistoryLoading = true;
+        state.downloadHistoryError = '';
+        renderDownloadHistory();
+        try {
+            const result = await api.getDownloadHistory();
+            if (!result || result.ok !== true || !Array.isArray(result.downloads)) throw serviceError(result, 'Completed download history could not be loaded.');
+            state.downloadHistory = result.downloads;
+        } catch (error) {
+            state.downloadHistory = [];
+            state.downloadHistoryError = error && error.message ? error.message : 'Completed download history could not be loaded.';
+        } finally {
+            state.downloadHistoryLoading = false;
+            renderDownloadHistory();
+        }
+    }
+
+    async function clearDownloadHistory() {
+        if (state.downloadHistoryLoading || !state.downloadHistory.length) return;
+        try {
+            const result = await api.clearDownloadHistory();
+            if (!result || result.ok !== true) throw serviceError(result, 'Download history could not be cleared.');
+            state.downloadHistory = [];
+            state.downloadHistoryError = '';
+            renderDownloadHistory();
+            showMessage(textValue(result.message, 'Download history cleared. Saved files remain in Android Downloads.'), 'info');
+        } catch (error) {
+            state.downloadHistoryError = error && error.message ? error.message : 'Download history could not be cleared.';
+            renderDownloadHistory();
+            showMessage(state.downloadHistoryError, 'error');
+        }
+    }
+
+    async function openDownloadHistory(historyId) {
+        if (typeof historyId !== 'string' || !historyId.trim()) return;
+        try {
+            const result = await api.openDownload(historyId);
+            if (!result || result.ok !== true) throw serviceError(result, 'The downloaded file could not be opened.');
+            showMessage(textValue(result.message, 'The downloaded file was opened.'), 'success');
+        } catch (error) {
+            showMessage(error && error.message ? error.message : 'The downloaded file could not be opened.', 'error');
+            loadDownloadHistory();
+        }
+    }
+
+    function updateStatusLabel(status) {
+        const value = status && typeof status.state === 'string' ? status.state : 'idle';
+        if (value === 'queued') return 'Update queued';
+        if (value === 'downloading') return status && status.percent !== null && status.percent !== undefined
+            ? 'Downloading update · ' + Math.round(Number(status.percent)) + '%'
+            : 'Downloading update';
+        if (value === 'installer_opened') return 'Installer opened';
+        if (value === 'ready') return 'Update ready to install';
+        if (value === 'verifying') return 'Verifying update APK';
+        if (value === 'blocked') return 'Install permission needed';
+        if (value === 'error') return 'Update download needs attention';
+        return 'Check Resource Radar releases';
+    }
+
+    function setUpdateMenuStatus(status, fallback) {
+        if (!els.menuUpdateStatus) return;
+        els.menuUpdateStatus.textContent = fallback || updateStatusLabel(status);
+    }
+
+    function releaseMeta(release) {
+        if (!release || typeof release !== 'object') return '';
+        const tag = textValue(release.tagName, 'New release');
+        const title = textValue(release.title, '');
+        const asset = textValue(release.assetName, 'Android APK');
+        const size = finiteNumber(release.assetSize);
+        return tag + (title && title !== tag ? ' · ' + title : '') + ' · ' + asset + (size === null ? '' : ' · ' + formatBytes(size));
+    }
+
+    function showUpdatePanel() {
+        closeMenu();
+        setVisible(els.updatePanel, true);
+    }
+
+    function hideUpdatePanel() {
+        setVisible(els.updatePanel, false);
+    }
+
+    function renderUpdatePanel(result, mode) {
+        const release = result && result.release ? result.release : state.updateRelease;
+        const hasRelease = (result && Object.prototype.hasOwnProperty.call(result, 'hasUpdate'))
+            ? result.hasUpdate === true : Boolean(state.updateRelease);
+        const hasUpdate = (result && Object.prototype.hasOwnProperty.call(result, 'downloadable'))
+            ? result.downloadable === true : hasRelease;
+        const status = result && typeof result.state === 'string' ? result.state : '';
+        const message = result && typeof result.message === 'string' ? result.message : '';
+        els.updateReleaseMeta.textContent = release ? releaseMeta(release) : '';
+        els.updateBody.textContent = release ? textValue(release.body, 'No changelog was provided for this release.') : '';
+        els.updateRetry.classList.toggle('hidden', mode === 'download');
+        els.updateDownload.classList.toggle('hidden', !hasUpdate);
+        els.updateSettings.classList.toggle('hidden', status !== 'blocked');
+        els.updateDownload.disabled = false;
+        els.updateDownload.textContent = 'Download';
+        if (mode === 'error') {
+            els.updateKicker.textContent = 'UPDATE CHECK';
+            els.updateTitle.textContent = 'Update check unavailable';
+            els.updateMessage.textContent = message || 'GitHub could not be reached safely. Try again later.';
+            els.updateBody.textContent = '';
+            els.updateDownload.classList.add('hidden');
+            els.updateSettings.classList.add('hidden');
+            els.updateRetry.classList.remove('hidden');
+            return;
+        }
+        if (mode === 'checking') {
+            els.updateKicker.textContent = 'UPDATE CHECK';
+            els.updateTitle.textContent = 'Checking for updates';
+            els.updateMessage.textContent = message || 'GitHub is checking the latest eligible public release.';
+            els.updateBody.textContent = '';
+            els.updateDownload.classList.add('hidden');
+            els.updateSettings.classList.add('hidden');
+            els.updateRetry.classList.add('hidden');
+            return;
+        }
+        if (!hasRelease) {
+            els.updateKicker.textContent = 'UPDATE CHECK';
+            els.updateTitle.textContent = result && result.code === 'NO_RELEASE' ? 'No stable release yet' : 'You’re up to date';
+            els.updateMessage.textContent = message || 'This Android app is using the latest eligible public release.';
+            els.updateReleaseMeta.textContent = '';
+            els.updateBody.textContent = '';
+            els.updateRetry.classList.remove('hidden');
+            return;
+        }
+        if (!hasUpdate) {
+            els.updateKicker.textContent = 'UPDATE AVAILABLE';
+            els.updateTitle.textContent = textValue(release && release.title, 'New Resource Radar release');
+            els.updateMessage.textContent = textValue(message, 'A newer release exists, but it does not include a supported Android APK.');
+            els.updateDownload.classList.add('hidden');
+            els.updateSettings.classList.add('hidden');
+            els.updateRetry.classList.remove('hidden');
+            return;
+        }
+        els.updateKicker.textContent = 'UPDATE AVAILABLE';
+        els.updateTitle.textContent = textValue(release.title, 'New Resource Radar release');
+        if (status === 'queued' || status === 'downloading' || status === 'verifying') {
+            els.updateDownload.disabled = true;
+            els.updateDownload.textContent = status === 'queued' ? 'Queued…' : status === 'verifying' ? 'Verifying…' : 'Downloading…';
+            els.updateMessage.textContent = textValue(message, 'Android is downloading the update in the background.');
+            const percent = finiteNumber(result && result.percent);
+            if (percent !== null) els.updateMessage.textContent += '\n' + Math.round(percent) + '% · ' + formatBytes(result.downloadedBytes) + ' / ' + formatBytes(result.totalBytes);
+        } else if (status === 'installer_opened') {
+            els.updateDownload.textContent = 'Install again';
+            els.updateMessage.textContent = textValue(message, 'Android’s package installer is ready to continue.');
+        } else if (status === 'ready') {
+            els.updateDownload.textContent = 'Install';
+            els.updateMessage.textContent = textValue(message, 'The update APK is verified and ready to install.');
+        } else if (status === 'blocked') {
+            els.updateMessage.textContent = textValue(message, 'Allow Resource Radar to install unknown apps in Android Settings, then try Install again.');
+            els.updateDownload.textContent = 'Try install again';
+        } else if (status === 'error') {
+            els.updateMessage.textContent = textValue(message, 'The update download needs attention.');
+            els.updateDownload.textContent = 'Try download again';
+        } else {
+            els.updateMessage.textContent = message || 'Download the verified Android APK from the public release.';
+        }
+    }
+
+    function stopUpdatePolling() {
+        if (state.updatePollTimer) {
+            window.clearInterval(state.updatePollTimer);
+            state.updatePollTimer = null;
+        }
+    }
+
+    async function refreshUpdateStatus(showPanel) {
+        if (state.updateStatusInFlight) return null;
+        state.updateStatusInFlight = true;
+        try {
+            const result = await api.getUpdateStatus();
+            const previousState = state.updateStatus && state.updateStatus.state;
+            state.updateStatus = result;
+            if (result && result.release) state.updateRelease = result.release;
+            setUpdateMenuStatus(result);
+            if (showPanel && result && result.state !== previousState
+                    && ['ready', 'blocked', 'error'].includes(result.state)) showUpdatePanel();
+            if (showPanel && result && result.state !== 'idle' && !els.updatePanel.classList.contains('hidden')) renderUpdatePanel(result, 'download');
+            const active = result && ['queued', 'downloading', 'verifying', 'ready'].includes(result.state);
+            if (active) {
+                if (!state.updatePollTimer) {
+                    state.updatePollTimer = window.setInterval(() => refreshUpdateStatus(true), 1200);
+                }
+            } else {
+                stopUpdatePolling();
+            }
+            return result;
+        } catch (error) {
+            setUpdateMenuStatus(null, 'Update status unavailable');
+            stopUpdatePolling();
+            return null;
+        } finally {
+            state.updateStatusInFlight = false;
+        }
+    }
+
+    async function checkForUpdates(manual) {
+        // Reopen an approved transfer without a network check, including when offline.
+        if (manual && state.updateStatus
+                && ['queued', 'downloading', 'verifying', 'ready', 'blocked', 'installer_opened'].includes(state.updateStatus.state)) {
+            showUpdatePanel();
+            renderUpdatePanel(state.updateStatus, 'download');
+            refreshUpdateStatus(true);
+            return;
+        }
+        if (manual) {
+            closeMenu();
+            state.updateManualRequested = true;
+            showUpdatePanel();
+            renderUpdatePanel({ hasUpdate: false, message: 'Checking GitHub for the latest eligible release…' }, 'checking');
+        }
+        if (state.updateCheckInFlight) return;
+        state.updateCheckInFlight = true;
+        setUpdateMenuStatus(null, 'Checking for updates…');
+        try {
+            const result = await api.checkForUpdates();
+            state.updateRelease = result && result.hasUpdate === true && result.release ? result.release : null;
+            setUpdateMenuStatus(result, result.hasUpdate === true ? 'Update available' : 'You’re up to date');
+            if (state.updateStatus && state.updateStatus.state !== 'idle' && state.updateStatus.release) {
+                state.updateRelease = state.updateStatus.release;
+                setUpdateMenuStatus(state.updateStatus);
+                if (state.updateManualRequested || ['ready', 'blocked'].includes(state.updateStatus.state)) {
+                    showUpdatePanel();
+                    renderUpdatePanel(state.updateStatus, 'download');
+                }
+            } else if (result && result.hasUpdate === true) {
+                showUpdatePanel();
+                renderUpdatePanel(result, 'check');
+            } else if (state.updateManualRequested) {
+                showUpdatePanel();
+                renderUpdatePanel(result, 'check');
+            }
+        } catch (error) {
+            const message = error && error.message ? error.message : 'GitHub could not be reached safely.';
+            setUpdateMenuStatus(null, 'Update check unavailable');
+            if (state.updateManualRequested) {
+                showUpdatePanel();
+                renderUpdatePanel({ message: message }, 'error');
+            }
+        } finally {
+            state.updateCheckInFlight = false;
+            state.updateManualRequested = false;
+        }
+    }
+
+    async function downloadUpdate() {
+        if (!state.updateRelease || state.updateDownloadInFlight) return;
+        state.updateDownloadInFlight = true;
+        els.updateDownload.disabled = true;
+        try {
+            const result = await api.downloadUpdate();
+            state.updateStatus = result;
+            if (result && result.release) state.updateRelease = result.release;
+            setUpdateMenuStatus(result);
+            showUpdatePanel();
+            renderUpdatePanel(result, 'download');
+            if (result && result.state && result.state !== 'idle') {
+                if (!state.updatePollTimer) state.updatePollTimer = window.setInterval(() => refreshUpdateStatus(true), 1200);
+            }
+            if (result && (result.state === 'ready' || result.state === 'blocked' || result.state === 'installer_opened')) {
+                window.setTimeout(() => refreshUpdateStatus(true), 400);
+            }
+        } catch (error) {
+            const message = error && error.message ? error.message : 'The Android update download could not be started.';
+            state.updateStatus = { state: 'error', message: message, release: state.updateRelease };
+            setUpdateMenuStatus(state.updateStatus);
+            showUpdatePanel();
+            renderUpdatePanel(state.updateStatus, 'download');
+        } finally {
+            state.updateDownloadInFlight = false;
+        }
+    }
+
+    async function openUpdateInstallSettings() {
+        try {
+            const result = await api.openUpdateInstallSettings();
+            if (result && result.message) showMessage(result.message, 'info');
+        } catch (error) {
+            showMessage(error && error.message ? error.message : 'Android install settings could not be opened.', 'error');
+        }
     }
 
     function isDownloadActive() {
@@ -312,6 +803,8 @@
         const availableCount = finiteNumber(playlist.availableCount);
         els.playlistCount.textContent = String(availableCount === null ? entries.filter((entry) => entry.available === true).length : availableCount);
         addResolutionOptions(els.playlistResolution, playlist.resolutions || []);
+        const folderName = textValue(playlist.folderName, 'playlist-specific folder');
+        els.playlistFolderNote.textContent = 'Saved sequentially with clean numbered names in ' + playlistPathLabel(folderName) + '.';
         els.playlistList.innerHTML = entries.map((entry, index) => {
             const order = finiteNumber(entry.order);
             const number = order === null ? index + 1 : Math.round(order);
@@ -364,6 +857,7 @@
                 renderDirectResults(result);
                 showMessage('Resources are ready to review. Up to three downloads can run at once.', 'success');
             }
+            rememberUrl(rawUrl);
             setVisible(els.empty, false);
         } catch (error) {
             showEmpty('Nothing saved yet', 'Check the URL and try again.');
@@ -390,6 +884,7 @@
             pending: true,
             total: finiteNumber(total),
             destination: destination,
+            destinationFolder: '',
             items: new Map(),
             titles: new Map(),
             preStartEvents: [],
@@ -397,7 +892,7 @@
         };
         els.progressTitle.textContent = title;
         els.progressLabel.textContent = state.activeJob.total ? 'Preparing 0 of ' + state.activeJob.total : 'Preparing…';
-        els.progressDetail.textContent = destination === 'playlist' ? 'Saving sequentially to Downloads/Playlist.' : 'Saving to Android Downloads.';
+        els.progressDetail.textContent = destination === 'playlist' ? 'Saving sequentially to a playlist-specific Downloads folder.' : 'Saving to Android Downloads.';
         els.progressOpenFolder.classList.add('hidden');
         els.cancelDownloads.classList.remove('hidden');
         els.downloadLog.innerHTML = '';
@@ -445,7 +940,7 @@
         let item = state.activeJob.items.get(itemId);
         if (!item) {
             const knownTitle = state.activeJob.titles.get(itemId);
-            item = { id: itemId, title: textValue(event && event.title, textValue(knownTitle, textValue(event && event.url, itemId))), status: 'active', phase: 'downloading', percent: null, downloaded: null, total: null, speed: null, eta: null, index: null, line: null };
+            item = { id: itemId, title: textValue(event && event.title, textValue(knownTitle, textValue(event && event.url, itemId))), status: 'active', phase: 'downloading', percent: null, downloaded: null, total: null, speed: null, eta: null, index: null, historySaved: true, line: null };
             state.activeJob.items.set(itemId, item);
         }
         return item;
@@ -567,7 +1062,9 @@
         if (type === 'playlist-ready') {
             const total = eventNumber(event, ['total', 'itemCount', 'count']);
             if (total !== null && total > 0) state.activeJob.total = total;
+            state.activeJob.destinationFolder = textValue(event.folderName, state.activeJob.destinationFolder);
             els.progressLabel.textContent = state.activeJob.total ? 'Ready · 0 of ' + state.activeJob.total : 'Ready to download';
+            els.progressDetail.textContent = state.activeJob.destinationFolder ? 'Saving sequentially to ' + playlistPathLabel(state.activeJob.destinationFolder) + '.' : 'Saving sequentially to a playlist-specific Downloads folder.';
             setAggregateProgress(0);
             return;
         }
@@ -607,6 +1104,7 @@
             item.status = 'complete';
             item.phase = 'complete';
             item.percent = 100;
+            item.historySaved = event.historySaved !== false;
             updateItemLine(item);
             updateAggregateProgress();
             return;
@@ -649,6 +1147,7 @@
         const status = typeof event.status === 'string' ? event.status.toLowerCase() : '';
         const canceled = event.canceled === true || type === 'job-canceled' || type === 'job-cancelled' || status === 'canceled' || status === 'cancelled';
         const itemFailed = Array.from(job.items.values()).some((item) => item.status === 'failed' || item.status === 'canceled');
+        const historyUnavailable = Array.from(job.items.values()).some((item) => item.historySaved === false);
         const results = Array.isArray(event.results) ? event.results : [];
         const resultFailures = results.filter((result) => result && result.ok !== true).length;
         const resultSuccesses = results.filter((result) => result && result.ok === true).length;
@@ -664,19 +1163,26 @@
             showMessage(textValue(event.message, textValue(event.error, 'One or more downloads failed.')), 'error');
         } else {
             els.progressLabel.textContent = 'Queue complete';
-            els.progressDetail.textContent = 'Saved to ' + destinationLabel(job) + '.';
+            els.progressDetail.textContent = historyUnavailable
+                ? 'Saved to ' + destinationLabel(job) + '; history could not be saved.'
+                : 'Saved to ' + destinationLabel(job) + '.';
             setAggregateProgress(1);
-            showMessage('Downloads are ready in ' + destinationLabel(job) + '.', 'success');
+            showMessage(historyUnavailable
+                ? 'Downloads are ready, but completed history could not be saved.'
+                : 'Downloads are ready in ' + destinationLabel(job) + '.', historyUnavailable ? 'error' : 'success');
         }
         if (savedCount) els.progressOpenFolder.classList.remove('hidden');
         else els.progressOpenFolder.classList.add('hidden');
         els.cancelDownloads.classList.add('hidden');
         state.activeJob = null;
         updateControls();
+        loadDownloadHistory();
     }
 
     function destinationLabel(job) {
-        return job && job.destination === 'playlist' ? 'Downloads/Playlist' : 'Android Downloads';
+        return job && job.destination === 'playlist'
+            ? playlistPathLabel(textValue(job.destinationFolder, 'the playlist folder'))
+            : 'Android Downloads';
     }
 
     function acceptJobResult(result) {
@@ -736,6 +1242,8 @@
         const entryCount = Array.isArray(playlist.entries) ? playlist.entries.filter((entry) => entry && entry.available === true).length : 0;
         const count = declaredCount === null ? entryCount : declaredCount;
         showProgress('Downloading playlist', count === null ? 0 : count, 'playlist', 'playlist');
+        state.activeJob.destinationFolder = textValue(playlist.folderName, '');
+        if (state.activeJob.destinationFolder) els.progressDetail.textContent = 'Saving sequentially to ' + playlistPathLabel(state.activeJob.destinationFolder) + '.';
         (Array.isArray(playlist.entries) ? playlist.entries : []).forEach((entry) => {
             const order = finiteNumber(entry && entry.order);
             if (order !== null) state.activeJob.titles.set('video-' + Math.round(order), textValue(entry.title, 'Video ' + Math.round(order)));
@@ -815,17 +1323,63 @@
     els.downloadVideo.addEventListener('click', startVideoDownload);
     els.downloadPlaylist.addEventListener('click', startPlaylistDownload);
     els.cancelDownloads.addEventListener('click', cancelActiveJob);
-    els.openDownloads.addEventListener('click', () => openDownloads('downloads'));
+    els.openDownloads.addEventListener('click', () => { closeMenu(); openDownloads('downloads'); });
     els.progressOpenFolder.addEventListener('click', () => openDownloads(state.destination));
-    els.about.addEventListener('click', loadNotices);
+    els.themeToggle.addEventListener('click', toggleTheme);
+    els.menuToggle.addEventListener('click', openMenu);
+    els.menuClose.addEventListener('click', closeMenu);
+    els.menuBackdrop.addEventListener('click', closeMenu);
+    els.menuHome.addEventListener('click', goHome);
+    els.menuUrlHistory.addEventListener('click', () => navigate('url-history', true));
+    els.menuDownloadHistory.addEventListener('click', () => navigate('download-history', true));
+    els.menuCheckUpdates.addEventListener('click', () => { closeMenu(); checkForUpdates(true); });
+    els.urlHistoryBack.addEventListener('click', goBackFromPage);
+    els.urlHistoryHome.addEventListener('click', goHome);
+    els.downloadHistoryBack.addEventListener('click', goBackFromPage);
+    els.downloadHistoryHome.addEventListener('click', goHome);
+    els.clearUrlHistory.addEventListener('click', clearUrlHistory);
+    els.urlHistoryList.addEventListener('click', (event) => {
+        const item = event.target.closest('button[data-history-index]');
+        if (!item) return;
+        const index = parseInt(item.dataset.historyIndex, 10);
+        const url = Number.isInteger(index) ? state.urlHistory[index] : '';
+        if (!isRestorableUrl(url)) return;
+        els.url.value = url;
+        els.clearUrl.classList.remove('hidden');
+        goHome();
+        els.url.focus();
+        showMessage('URL restored. Press Scan page to inspect it again.', 'info');
+    });
+    els.clearDownloadHistory.addEventListener('click', clearDownloadHistory);
+    els.downloadHistoryList.addEventListener('click', (event) => {
+        const item = event.target.closest('button[data-download-history-id]');
+        if (item) openDownloadHistory(item.dataset.downloadHistoryId || '');
+    });
+    els.about.addEventListener('click', () => { closeMenu(); loadNotices(); });
     els.aboutClose.addEventListener('click', () => setVisible(els.aboutPanel, false));
+    els.updateClose.addEventListener('click', hideUpdatePanel);
+    els.updateRetry.addEventListener('click', () => checkForUpdates(true));
+    els.updateDownload.addEventListener('click', downloadUpdate);
+    els.updateSettings.addEventListener('click', openUpdateInstallSettings);
+    window.addEventListener('popstate', () => renderRoute(routeFromLocation()));
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && handleBack()) event.preventDefault(); });
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopUpdatePolling();
+        else refreshUpdateStatus(true);
+    });
 
     try {
         api.onDownloadEvent(updateProgress);
     } catch (error) {
         setServiceState({ ok: false, message: error.message });
     }
+    loadUrlHistory();
+    renderDownloadHistory();
+    loadDownloadHistory();
+    loadTheme();
+    renderRoute(routeFromLocation());
     setServiceState({ loading: true });
     api.getMediaToolStatus().then(setServiceState).catch((error) => setServiceState({ ok: false, message: error.message }));
+    refreshUpdateStatus(true).finally(() => checkForUpdates(false));
     updateControls();
 }());
