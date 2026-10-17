@@ -122,7 +122,7 @@ public final class UnwiredResourceService implements ResourceRadarService {
     public JSONObject openDownloads(String destination) {
         String safeDestination = TextUtils.isEmpty(destination) ? "downloads" : destination;
         if (!"downloads".equals(safeDestination) && !"playlist".equals(safeDestination)) {
-            return error("INVALID_DESTINATION", "Only the Downloads folder or a playlist-specific folder is allowed.");
+            return error("INVALID_DESTINATION", "Only the Downloads folder or its Playlist subfolder is allowed.");
         }
 
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -140,41 +140,6 @@ public final class UnwiredResourceService implements ResourceRadarService {
         }
 
         return launchFolderPicker(intent, safeDestination);
-    }
-
-    @Override
-    public JSONObject getDownloadHistory() {
-        return error("NATIVE_UNWIRED", "Android download history is not wired in this shell.");
-    }
-
-    @Override
-    public JSONObject clearDownloadHistory() {
-        return error("NATIVE_UNWIRED", "Android download history is not wired in this shell.");
-    }
-
-    @Override
-    public JSONObject openDownload(String historyId) {
-        return error("NATIVE_UNWIRED", "Android download history is not wired in this shell.");
-    }
-
-    @Override
-    public JSONObject checkForUpdates() {
-        return error("NATIVE_UNWIRED", "Android update checking is not wired in this shell.");
-    }
-
-    @Override
-    public JSONObject getUpdateStatus() {
-        return error("NATIVE_UNWIRED", "Android update status is not wired in this shell.");
-    }
-
-    @Override
-    public JSONObject downloadUpdate() {
-        return error("NATIVE_UNWIRED", "Android update downloads are not wired in this shell.");
-    }
-
-    @Override
-    public JSONObject openUpdateInstallSettings() {
-        return error("NATIVE_UNWIRED", "Android update installation settings are not wired in this shell.");
     }
 
     private JSONObject launchFolderPicker(Intent intent, String destination) {

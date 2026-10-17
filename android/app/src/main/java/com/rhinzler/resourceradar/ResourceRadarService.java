@@ -24,20 +24,6 @@ public interface ResourceRadarService {
 
     JSONObject openDownloads(String destination);
 
-    JSONObject getDownloadHistory();
-
-    JSONObject clearDownloadHistory();
-
-    JSONObject openDownload(String historyId);
-
-    JSONObject checkForUpdates();
-
-    JSONObject getUpdateStatus();
-
-    JSONObject downloadUpdate();
-
-    JSONObject openUpdateInstallSettings();
-
     interface DownloadEventSink {
         void emit(JSONObject event);
     }

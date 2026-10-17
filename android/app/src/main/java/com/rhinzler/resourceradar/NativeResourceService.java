@@ -94,8 +94,6 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
     private final PublicHttp http;
     private final ExecutorService downloadExecutor;
     private final ExecutorService coordinatorExecutor;
-    private final DownloadHistoryStore downloadHistory;
-    private final UpdateManager updateManager;
     private final ConcurrentHashMap<String, DownloadJob> jobs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CachedPlaylist> playlistCache = new ConcurrentHashMap<>();
     private final Set<String> ownedProcessIds = ConcurrentHashMap.newKeySet();
@@ -108,9 +106,7 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
             throw new IllegalArgumentException("context is required");
         }
         this.context = context.getApplicationContext() == null ? context : context.getApplicationContext();
-        this.downloadHistory = new DownloadHistoryStore(this.context);
         this.http = new PublicHttp();
-        this.updateManager = UpdateManager.get(this.context);
         this.downloadExecutor = Executors.newFixedThreadPool(MAX_DIRECT_ACTIVE, runnable -> {
             Thread thread = new Thread(runnable, "resource-radar-download-queue");
             thread.setDaemon(true);
@@ -307,7 +303,7 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
         }
         String value = destination == null ? "downloads" : destination.trim().toLowerCase(Locale.US);
         if (!"downloads".equals(value) && !"playlist".equals(value)) {
-            return error("INVALID_DESTINATION", "Only Android Downloads or a playlist Downloads folder can be opened.");
+            return error("INVALID_DESTINATION", "Only Downloads or its Playlist subfolder can be opened.");
         }
         Intent intent = new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -320,126 +316,6 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
             return error("DOWNLOADS_UNAVAILABLE", "Android did not provide a Downloads view.");
         } catch (RuntimeException exception) {
             return error("DOWNLOADS_OPEN_FAILED", "Android could not open Downloads.");
-        }
-    }
-
-    @Override
-    public JSONObject getDownloadHistory() {
-        if (closed) {
-            return error("SERVICE_CLOSED", "The native Resource Radar service is closed.");
-        }
-        try {
-            return downloadHistory.list();
-        } catch (JSONException exception) {
-            return error("DOWNLOAD_HISTORY_FAILED", "The completed download history could not be read.");
-        } catch (RuntimeException exception) {
-            return error("DOWNLOAD_HISTORY_FAILED", "The completed download history could not be read.");
-        }
-    }
-
-    @Override
-    public JSONObject clearDownloadHistory() {
-        if (closed) {
-            return error("SERVICE_CLOSED", "The native Resource Radar service is closed.");
-        }
-        try {
-            downloadHistory.clear();
-            JSONObject result = success("CLEARED", "Download history cleared. Saved files remain in Android Downloads.");
-            put(result, "count", 0);
-            return result;
-        } catch (JSONException exception) {
-            return error("DOWNLOAD_HISTORY_FAILED", "The completed download history could not be cleared.");
-        } catch (RuntimeException exception) {
-            return error("DOWNLOAD_HISTORY_FAILED", "The completed download history could not be cleared.");
-        }
-    }
-
-    @Override
-    public JSONObject openDownload(String historyId) {
-        if (closed) {
-            return error("SERVICE_CLOSED", "The native Resource Radar service is closed.");
-        }
-        JSONObject result = downloadHistory.open(historyId);
-        if (!result.optBoolean("ok", false)) {
-            return result;
-        }
-        String rawUri = result.optString("uri", "");
-        String displayName = result.optString("displayName", "Downloaded file");
-        Uri uri = Uri.parse(rawUri);
-        String mime;
-        try {
-            mime = context.getContentResolver().getType(uri);
-        } catch (RuntimeException exception) {
-            return error("DOWNLOAD_UNAVAILABLE", "The downloaded file is no longer available.");
-        }
-        if (TextUtils.isEmpty(mime)) mime = MediaOutput.mimeForName(displayName, "application/octet-stream");
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(uri, mime);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-        try {
-            context.startActivity(intent);
-            result.remove("uri");
-            return result;
-        } catch (ActivityNotFoundException exception) {
-            return error("FILE_VIEWER_UNAVAILABLE", "Android did not provide an app to open this file.");
-        } catch (RuntimeException exception) {
-            return error("FILE_OPEN_FAILED", "Android could not open this downloaded file.");
-        }
-    }
-
-    @Override
-    public JSONObject checkForUpdates() {
-        if (closed) {
-            return error("SERVICE_CLOSED", "The native Resource Radar service is closed.");
-        }
-        try {
-            return updateManager.checkForUpdates(http);
-        } catch (PublicHttp.PublicHttpException exception) {
-            return error(exception.code(), "HTTP_403".equals(exception.code()) || "HTTP_429".equals(exception.code())
-                    ? "GitHub is limiting public update checks. Try again later."
-                    : "GitHub update checking is unavailable. Check your connection and try again.");
-        } catch (JSONException exception) {
-            return error("UPDATE_RESPONSE_INVALID", "GitHub returned an invalid release response.");
-        } catch (IOException exception) {
-            return error("UPDATE_CHECK_FAILED", "GitHub could not be reached safely for update checking.");
-        } catch (RuntimeException exception) {
-            return error("UPDATE_CHECK_FAILED", "The Android update check could not be completed.");
-        }
-    }
-
-    @Override
-    public JSONObject getUpdateStatus() {
-        if (closed) {
-            return error("SERVICE_CLOSED", "The native Resource Radar service is closed.");
-        }
-        try {
-            return updateManager.getStatus();
-        } catch (RuntimeException exception) {
-            return error("UPDATE_STATUS_FAILED", "The Android update status could not be read.");
-        }
-    }
-
-    @Override
-    public JSONObject downloadUpdate() {
-        if (closed) {
-            return error("SERVICE_CLOSED", "The native Resource Radar service is closed.");
-        }
-        try {
-            return updateManager.downloadUpdate();
-        } catch (RuntimeException exception) {
-            return error("UPDATE_DOWNLOAD_FAILED", "The Android update download could not be started.");
-        }
-    }
-
-    @Override
-    public JSONObject openUpdateInstallSettings() {
-        if (closed) {
-            return error("SERVICE_CLOSED", "The native Resource Radar service is closed.");
-        }
-        try {
-            return updateManager.openInstallSettings();
-        } catch (RuntimeException exception) {
-            return error("UPDATE_SETTINGS_FAILED", "Android could not open install settings.");
         }
     }
 
@@ -1012,8 +888,7 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
         Collections.sort(available, playlistOrder);
         int order = 1;
         for (PlaylistItem item : available) item.order = order++;
-        String folderName = MediaOutput.playlistFolderName(playlistTitle, rawUrl);
-        return new PlaylistPlan(rawUrl, playlistTitle, playlistUploader, folderName, available, allEntries,
+        return new PlaylistPlan(rawUrl, playlistTitle, playlistUploader, available, allEntries,
                 new ArrayList<>(playlistHeights), seen);
     }
 
@@ -1035,7 +910,6 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
         put(result, "url", plan.url);
         put(result, "title", plan.title);
         put(result, "uploader", plan.uploader);
-        put(result, "folderName", plan.folderName);
         put(result, "availableCount", plan.items.size());
         JSONArray entries = new JSONArray();
         for (PlaylistItem item : plan.entries) {
@@ -1122,10 +996,8 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
             }
             checkCanceled(job);
             job.total = plan.items.size();
-            JSONObject readyEvent = event("playlist-ready", job, null, -1, job.total, null,
-                    null, null, null, null, "ready", null);
-            put(readyEvent, "folderName", plan.folderName);
-            emit(job, readyEvent);
+            emit(job, event("playlist-ready", job, null, -1, job.total, null,
+                    null, null, null, null, "ready", null));
             if (plan.items.isEmpty()) {
                 job.fatalError = "No available public videos were found in this playlist.";
                 return;
@@ -1133,7 +1005,7 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
             for (PlaylistItem item : plan.items) {
                 checkCanceled(job);
                 try {
-                    downloadPlatformItem(job, request, item, plan.folderName);
+                    downloadPlatformItem(job, request, item);
                 } catch (JobCanceledException exception) {
                     throw exception;
                 } catch (Throwable throwable) {
@@ -1159,7 +1031,7 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
             // any of its signed extractor URLs to the event sink.
             job.mediaMetadata = media;
             try {
-                downloadPlatformItem(job, request, item, null);
+                downloadPlatformItem(job, request, item);
             } catch (JobCanceledException exception) {
                 throw exception;
             } catch (Throwable throwable) {
@@ -1227,9 +1099,8 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
             checkCanceled(job);
             emitDirectProgress(job, item, received, expected, startedAt, "finalizing");
             MediaOutput.PendingFile pending = beginPending(job, fileName,
-                    response.contentType(), "");
+                    response.contentType(), false);
             copyStageToPending(job, item, staged, pending, received, expected, startedAt);
-            String historyId = recordCompletedDownload(pending, received);
             if (staged.exists() && !staged.delete()) {
                 // Stage cleanup is retried by the job finally block.
             }
@@ -1240,8 +1111,6 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
                             ? Math.max(0L, (long) ((expected - received) / Math.max(1d, speed(received, startedAt)))) : null,
                     "complete", null);
             put(completeEvent, "title", item.label);
-            put(completeEvent, "historySaved", !historyId.isEmpty());
-            if (!historyId.isEmpty()) put(completeEvent, "historyId", historyId);
             emit(job, completeEvent);
         } catch (JobCanceledException exception) {
             throw exception;
@@ -1296,8 +1165,7 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
         job.pendingRows.remove(pending);
     }
 
-    private void downloadPlatformItem(DownloadJob job, PlatformRequest request, PlatformItem item,
-                                      String outputFolder)
+    private void downloadPlatformItem(DownloadJob job, PlatformRequest request, PlatformItem item)
             throws IOException, JobCanceledException {
         int index = Math.max(0, item.order - 1);
         JSONObject startedEvent = event("item-started", job, item.itemId(), index, job.total,
@@ -1333,17 +1201,13 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
             }
             String fileName = output.getName();
             MediaOutput.PendingFile pending = beginPending(job, fileName,
-                    MediaOutput.mimeForName(fileName, "video/mp4"),
-                    request.playlist ? MediaOutput.playlistRelativeFolder(outputFolder) : "");
+                    MediaOutput.mimeForName(fileName, "video/mp4"), request.playlist);
             copyStageToPending(job, item, output, pending, output.length(), output.length(), System.nanoTime());
             long bytes = output.length();
-            String historyId = recordCompletedDownload(pending, bytes);
             job.received.addAndGet(bytes);
             JSONObject completeEvent = event("item-complete", job, item.itemId(), index, job.total,
                     100d, bytes, bytes, null, null, "complete", null);
             put(completeEvent, "title", item.title);
-            put(completeEvent, "historySaved", !historyId.isEmpty());
-            if (!historyId.isEmpty()) put(completeEvent, "historyId", historyId);
             emit(job, completeEvent);
         } catch (YoutubeDL.CanceledException exception) {
             throw new JobCanceledException();
@@ -1390,24 +1254,11 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
     }
 
     private MediaOutput.PendingFile beginPending(DownloadJob job, String fileName,
-                                                  String mime, String relativeFolder) throws IOException, JobCanceledException {
+                                                  String mime, boolean playlist) throws IOException, JobCanceledException {
         checkCanceled(job);
-        MediaOutput.PendingFile pending = MediaOutput.beginPending(context, fileName, mime, relativeFolder);
+        MediaOutput.PendingFile pending = MediaOutput.beginPending(context, fileName, mime, playlist);
         job.pendingRows.add(pending);
         return pending;
-    }
-
-    private String recordCompletedDownload(MediaOutput.PendingFile pending, long size) {
-        if (pending == null) return "";
-        try {
-            return downloadHistory.record(pending.uri(), pending.displayName(), pending.mimeType(),
-                    size, pending.relativePath());
-        } catch (JSONException | RuntimeException exception) {
-            // The MediaStore row is already complete and remains usable.  Keep the
-            // download successful even if preference storage is temporarily full;
-            // the completion event exposes historySaved=false for the UI.
-            return "";
-        }
     }
 
     private Function3<Float, Long, String, Unit> callbackFor(DownloadJob job,
@@ -1819,18 +1670,15 @@ public final class NativeResourceService implements ResourceRadarService, AutoCl
         final String url;
         final String title;
         final String uploader;
-        final String folderName;
         final List<PlaylistItem> items;
         final List<PlaylistItem> entries;
         final List<Integer> resolutions;
         final int scanned;
-        PlaylistPlan(String url, String title, String uploader, String folderName,
-                     List<PlaylistItem> items,
+        PlaylistPlan(String url, String title, String uploader, List<PlaylistItem> items,
                      List<PlaylistItem> entries, List<Integer> resolutions, int scanned) {
             this.url = url;
             this.title = title;
             this.uploader = uploader;
-            this.folderName = folderName;
             this.items = items;
             this.entries = entries;
             this.resolutions = resolutions;

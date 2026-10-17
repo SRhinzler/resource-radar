@@ -1,6 +1,6 @@
 {
   "name": "resource-radar",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "A focused Windows desktop app for discovering and downloading public videos and documents from a webpage.",
   "main": "src/main.js",
   "private": true,

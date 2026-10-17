@@ -7,8 +7,8 @@ const { createRequire } = require('node:module');
 const test = require('node:test');
 
 async function loadMain(t, overrides = {}) {
-  const root = overrides.root || fs.mkdtempSync(path.join(os.tmpdir(), 'radar-main-'));
-  if (!overrides.root) t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-main-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const handlers = new Map();
   const events = [];
   const opened = [];
@@ -54,7 +54,7 @@ test('inspect-platform routes a resolved LinkedIn short link to media extraction
   assert.equal(extracted, canonical);
 });
 
-test('playlist IPC downloads remain sequential and oldest-first inside a derived playlist folder', async (t) => {
+test('playlist IPC downloads remain sequential and oldest-first inside Downloads/Playlist', async (t) => {
   const calls = [];
   let active = 0;
   let maxActive = 0;
@@ -79,18 +79,17 @@ test('playlist IPC downloads remain sequential and oldest-first inside a derived
   const result = await main.invoke('download-platform-media', {
     url: 'https://www.youtube.com/playlist?list=PLcourse123', playlist: true,
   });
-  const playlistDirectory = path.join(main.root, 'Playlist', 'Playlist - PLcourse123');
   assert.equal(maxActive, 1);
   assert.deepEqual(calls.map((call) => call.order), [1, 2]);
   assert.ok(calls[0].url.includes('old12345678'));
-  assert.ok(calls.every((call) => call.downloadDirectory === playlistDirectory));
+  assert.ok(calls.every((call) => call.downloadDirectory === path.join(main.root, 'Playlist')));
   assert.equal(result.results.length, 2);
-  assert.equal(main.events[0].downloadDirectory, playlistDirectory);
-  assert.equal(main.events.at(-1).downloadDirectory, playlistDirectory);
+  assert.equal(main.events[0].downloadDirectory, path.join(main.root, 'Playlist'));
+  assert.equal(main.events.at(-1).downloadDirectory, path.join(main.root, 'Playlist'));
   assert.equal(main.events.filter((event) => event.type === 'item-progress').length, 2);
-  await main.invoke('open-downloads', { kind: 'playlist', name: 'Playlist - PLcourse123' });
+  await main.invoke('open-downloads', 'playlist');
   await main.invoke('open-downloads', 'C:\\outside');
-  assert.deepEqual(main.opened, [playlistDirectory, main.root]);
+  assert.deepEqual(main.opened, [path.join(main.root, 'Playlist'), main.root]);
 });
 
 test('single video IPC still saves to the Downloads root', async (t) => {
@@ -137,118 +136,4 @@ test('direct IPC keeps three concurrent workers and separate progress identities
   const progress = main.events.filter((event) => event.type === 'item-progress');
   assert.equal(progress.length, 5);
   assert.ok(progress.every((event) => event.speedBytesPerSecond === 20 && event.etaSeconds === 4.5));
-});
-
-test('theme, URL history, and download history persist through narrow IPC operations', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-persistent-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-
-  const first = await loadMain(t, { root });
-  assert.equal((await first.invoke('get-preferences')).theme, 'light');
-  await first.invoke('set-theme', 'dark');
-  const remembered = await first.invoke('remember-url', 'example.com/library');
-  assert.equal(remembered.entries[0].url, 'https://example.com/library');
-  assert.throws(() => first.invoke('set-theme', 'sepia'), /light or dark/);
-
-  const second = await loadMain(t, {
-    root,
-    './core/downloader': {
-      describeDownloadError: (error) => error.message,
-      downloadResource: async (_resource, options) => {
-        const filePath = path.join(options.downloadDirectory, 'Report.pdf');
-        fs.writeFileSync(filePath, 'saved');
-        return { fileName: 'Report.pdf', path: filePath };
-      },
-    },
-  });
-  assert.equal((await second.invoke('get-preferences')).theme, 'dark');
-  assert.equal((await second.invoke('get-url-history')).entries[0].url, 'https://example.com/library');
-
-  await second.invoke('download-resources', [{ url: 'https://example.com/report.pdf', kind: 'document' }]);
-  const history = await second.invoke('get-download-history');
-  assert.equal(history.entries.length, 1);
-  assert.equal(history.entries[0].fileName, 'Report.pdf');
-  assert.equal(history.entries[0].available, true);
-  assert.equal(Object.hasOwn(history.entries[0], 'path'), false);
-
-  await second.invoke('open-download-file', history.entries[0].id);
-  assert.deepEqual(second.opened, [path.join(root, 'Report.pdf')]);
-  await second.invoke('clear-url-history');
-  assert.deepEqual((await second.invoke('get-url-history')).entries, []);
-  await second.invoke('clear-download-history');
-  assert.deepEqual((await second.invoke('get-download-history')).entries, []);
-});
-
-test('update IPC caches a checked release, ignores renderer arguments, and prevents duplicate downloads', async (t) => {
-  let releaseDownload;
-  let digestVerified = true;
-  const downloadGate = new Promise((resolve) => { releaseDownload = resolve; });
-  const main = await loadMain(t, {
-    './core/update-check': {
-      normalizeReleaseAsset: require('../src/core/update-check').normalizeReleaseAsset,
-      checkLatestRelease: async (version) => {
-        assert.equal(version, '2.0.0');
-        return {
-          status: 'available',
-          currentVersion: '2.0.0',
-          latestVersion: '2.1.0',
-          release: {
-            tagName: 'v2.1.0',
-            title: 'Resource Radar update',
-            body: '<b>Notes</b>',
-            publishedAt: '2026-10-01T00:00:00Z',
-            assetName: 'Resource-Radar-Setup-2.1.0.exe',
-            assetSize: 9,
-            hasDigest: true,
-            asset: {
-              name: 'Resource-Radar-Setup-2.1.0.exe',
-              state: 'uploaded',
-              size: 9,
-              contentType: 'application/octet-stream',
-              url: 'https://github.com/SRhinzler/resource-radar/releases/download/v2.1.0/Resource-Radar-Setup-2.1.0.exe',
-              digest: `sha256:${'a'.repeat(64)}`,
-            },
-          },
-        };
-      },
-      downloadReleaseAsset: async (asset, destination, options) => {
-        assert.equal(asset.name, 'Resource-Radar-Setup-2.1.0.exe');
-        assert.match(destination, /resource-radar-update-/);
-        await downloadGate;
-        fs.writeFileSync(destination, 'installer');
-        options.onProgress({ receivedBytes: 9, totalBytes: 9, percent: 100 });
-        return { path: destination, digestVerified };
-      },
-    },
-  });
-
-  const checked = await main.invoke('check-for-updates');
-  assert.equal(checked.status, 'available');
-  assert.equal(checked.release.tagName, 'v2.1.0');
-  assert.equal(Object.hasOwn(checked.release, 'asset'), false);
-
-  const first = main.invoke('download-update', { url: 'https://evil.example/installer.exe', path: 'C:\\outside.exe' });
-  await new Promise(setImmediate);
-  const duplicate = await main.invoke('download-update', { url: 'https://another.example/installer.exe' });
-  assert.equal(duplicate.ok, false);
-  assert.equal(duplicate.error, 'An update download is already in progress.');
-  const duringDownload = await main.invoke('check-for-updates');
-  assert.equal(duringDownload.status, 'downloading');
-  assert.equal(duringDownload.release.tagName, 'v2.1.0');
-  releaseDownload();
-  const downloaded = await first;
-  assert.equal(downloaded.ok, true);
-  assert.equal(downloaded.tagName, 'v2.1.0');
-  assert.equal(downloaded.assetName, 'Resource-Radar-Setup-2.1.0.exe');
-  assert.equal(downloaded.digestVerified, true);
-  assert.equal(main.opened.length, 1);
-  assert.match(main.opened[0], /resource-radar-update-/);
-  assert.ok(main.events.some((event) => event.type === 'update-download-progress' && event.percent === 100));
-
-  digestVerified = false;
-  await main.invoke('check-for-updates');
-  const rejected = await main.invoke('download-update');
-  assert.equal(rejected.ok, false);
-  assert.match(rejected.error, /SHA-256 verification/);
-  assert.equal(main.opened.length, 1);
 });

@@ -20,11 +20,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HashSet;
 import java.util.Locale;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -43,8 +39,6 @@ public final class MediaOutput {
     private static final Pattern BRACKET_ID = Pattern.compile("\\s+\\[[A-Za-z0-9_-]{6,}\\](?=\\s*$)");
     private static final Pattern CONTENT_DISPOSITION_NAME = Pattern.compile(
             "(?i)(?:^|;)\\s*(?:filename\\*|filename)\\s*=\\s*(?:UTF-8''|\\\")?([^;\\\"]+)");
-    private static final Object MEDIASTORE_INSERT_LOCK = new Object();
-    private static final Set<String> RESERVED_MEDIA_NAMES = new HashSet<>();
 
     private MediaOutput() {
     }
@@ -154,28 +148,6 @@ public final class MediaOutput {
         return numbered ? String.format(Locale.US, "%d. %s", Math.max(1, order), cleanTitle) : cleanTitle;
     }
 
-    /**
-     * Derives one safe, deterministic Downloads folder for a YouTube playlist.
-     * The visible title makes the folder useful to a person, while the list id and
-     * URL digest keep two playlists with the same title separate.
-     */
-    static String playlistFolderName(String playlistTitle, String playlistUrl) {
-        String title = sanitizeFileName(playlistTitle, "YouTube playlist");
-        title = trimComponent(title, 68);
-        String listId = "";
-        try {
-            okhttp3.HttpUrl parsed = okhttp3.HttpUrl.parse(playlistUrl == null ? "" : playlistUrl.trim());
-            if (parsed != null) listId = parsed.queryParameter("list");
-        } catch (RuntimeException ignored) {
-            // The platform URL has already passed the public URL policy.  Keep a
-            // safe fallback if a future caller supplies a malformed value here.
-        }
-        listId = trimComponent(sanitizeFileName(listId, "playlist"), 32);
-        String digest = shortDigest(playlistUrl);
-        String value = "YouTube - " + title + " - " + listId + " - " + digest;
-        return sanitizeFolderName(value, "YouTube playlist");
-    }
-
     /** Derives a direct-download filename from Content-Disposition, hint, URL, and MIME. */
     static String directFileName(String contentDisposition, String hint, String rawUrl,
                                  String contentType, int index) {
@@ -273,14 +245,9 @@ public final class MediaOutput {
         return "application/octet-stream";
     }
 
-    /**
-     * Creates a pending MediaStore Downloads row.  The relative folder is a sanitized
-     * path beneath Downloads; it can never introduce an absolute or traversal path. Existing rows
-     * are checked under a process-wide insert lock so equal titles receive a stable
-     * suffix before they become visible.
-     */
+    /** Creates a pending MediaStore Downloads row.  Android's provider owns final collision naming. */
     public static PendingFile beginPending(Context context, String requestedName, String mimeType,
-                                            String relativeFolder) throws IOException {
+                                           boolean playlist) throws IOException {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             throw new IOException("Android 10 or newer is required for safe pending Downloads output.");
         }
@@ -288,61 +255,25 @@ public final class MediaOutput {
         if (app == null) {
             throw new IOException("Android storage is unavailable.");
         }
-        Uri collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
-        String folder = sanitizeRelativeFolder(relativeFolder);
-        String relativePath = Environment.DIRECTORY_DOWNLOADS + "/";
-        if (!folder.isEmpty()) relativePath += folder + "/";
         String name = sanitizeFileName(requestedName, "resource.bin");
-        ContentResolver resolver = app.getContentResolver();
-        synchronized (MEDIASTORE_INSERT_LOCK) {
-            int suffix = 1;
-            while (suffix < 10000) {
-                String candidateName = suffix == 1 ? name : addSuffix(name, suffix);
-                ContentValues values = new ContentValues();
-                values.put(MediaStore.MediaColumns.DISPLAY_NAME, candidateName);
-                values.put(MediaStore.MediaColumns.MIME_TYPE, mimeForName(candidateName, mimeType));
-                values.put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath);
-                values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-                Uri uri;
-                try {
-                    String reservationKey = relativePath + "\u0000" + candidateName;
-                    if (RESERVED_MEDIA_NAMES.contains(reservationKey)) {
-                        suffix++;
-                        continue;
-                    }
-                    if (rowExists(resolver, collection, relativePath, candidateName)) {
-                        suffix++;
-                        continue;
-                    }
-                    uri = resolver.insert(collection, values);
-                } catch (RuntimeException exception) {
-                    throw new IOException("Android could not create the Downloads row.", exception);
-                }
-                if (uri == null) {
-                    throw new IOException("Android could not create the Downloads row.");
-                }
-                RESERVED_MEDIA_NAMES.add(relativePath + "\u0000" + candidateName);
-                return new PendingFile(resolver, uri, candidateName,
-                        mimeForName(candidateName, mimeType), relativePath,
-                        relativePath + "\u0000" + candidateName);
-            }
+        String mime = mimeForName(name, mimeType);
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH,
+                Environment.DIRECTORY_DOWNLOADS + (playlist ? "/Playlist/" : "/"));
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        Uri uri;
+        try {
+            uri = app.getContentResolver().insert(collection, values);
+        } catch (RuntimeException exception) {
+            throw new IOException("Android could not create the Downloads row.", exception);
         }
-        throw new IOException("Could not reserve a collision-safe Downloads filename.");
-    }
-
-    private static boolean rowExists(ContentResolver resolver, Uri collection,
-                                     String relativePath, String displayName) {
-        try (Cursor cursor = resolver.query(collection,
-                new String[]{MediaStore.MediaColumns._ID},
-                MediaStore.MediaColumns.RELATIVE_PATH + "=? AND "
-                        + MediaStore.MediaColumns.DISPLAY_NAME + "=?",
-                new String[]{relativePath, displayName}, null)) {
-            return cursor != null && cursor.moveToFirst();
-        } catch (RuntimeException ignored) {
-            // If a provider does not support the optional collision probe, its
-            // insert result remains authoritative and the row is still pending.
-            return false;
+        if (uri == null) {
+            throw new IOException("Android could not create the Downloads row.");
         }
+        return new PendingFile(app.getContentResolver(), uri, name, mime);
     }
 
     private static String pathName(String rawUrl) {
@@ -374,61 +305,6 @@ public final class MediaOutput {
         return clean.replace('.', '_');
     }
 
-    static String sanitizeFolderName(String rawName, String fallback) {
-        if (rawName == null || rawName.trim().isEmpty()) {
-            return "";
-        }
-        String value = sanitizeFileName(rawName, fallback);
-        value = value.replaceAll("[\\\\/]+", "_").trim();
-        while (value.endsWith(".") || value.endsWith(" ")) {
-            value = value.substring(0, value.length() - 1).trim();
-        }
-        if (value.isEmpty() || ".".equals(value) || "..".equals(value)) {
-            value = fallback == null || fallback.trim().isEmpty() ? "Downloads" : fallback.trim();
-        }
-        return trimComponent(value, MAX_NAME_LENGTH);
-    }
-
-    /** Returns the fixed Playlist parent plus one safe, title-derived child folder. */
-    static String playlistRelativeFolder(String playlistFolderName) {
-        String child = sanitizeFolderName(playlistFolderName, "YouTube playlist");
-        return child.isEmpty() ? "Playlist" : "Playlist/" + child;
-    }
-
-    private static String sanitizeRelativeFolder(String rawName) {
-        if (rawName == null || rawName.trim().isEmpty()) return "";
-        StringBuilder result = new StringBuilder();
-        String[] components = rawName.split("[/\\\\]+");
-        for (String component : components) {
-            String clean = sanitizeFolderName(component, "");
-            if (clean.isEmpty()) continue;
-            if (result.length() > 0) result.append('/');
-            result.append(clean);
-        }
-        return result.toString();
-    }
-
-    private static String trimComponent(String value, int maximum) {
-        String result = value == null ? "" : value.trim();
-        if (result.length() <= maximum) return result;
-        return result.substring(0, Math.max(1, maximum)).trim();
-    }
-
-    private static String shortDigest(String raw) {
-        String value = raw == null ? "" : raw;
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder(12);
-            for (int index = 0; index < 6 && index < digest.length; index++) {
-                builder.append(String.format(Locale.US, "%02x", digest[index] & 0xff));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            return Integer.toHexString(value.hashCode());
-        }
-    }
-
     private static String addSuffix(String name, int suffix) {
         int dot = name.lastIndexOf('.');
         if (dot <= 0) {
@@ -443,18 +319,13 @@ public final class MediaOutput {
         private final Uri uri;
         private final String displayName;
         private final String mimeType;
-        private final String relativePath;
-        private final String reservationKey;
         private boolean finalized;
 
-        PendingFile(ContentResolver resolver, Uri uri, String displayName, String mimeType,
-                    String relativePath, String reservationKey) {
+        PendingFile(ContentResolver resolver, Uri uri, String displayName, String mimeType) {
             this.resolver = resolver;
             this.uri = uri;
             this.displayName = displayName;
             this.mimeType = mimeType;
-            this.relativePath = relativePath;
-            this.reservationKey = reservationKey;
         }
 
         public Uri uri() {
@@ -467,10 +338,6 @@ public final class MediaOutput {
 
         public String mimeType() {
             return mimeType;
-        }
-
-        public String relativePath() {
-            return relativePath;
         }
 
         public OutputStream openOutput() throws IOException {
@@ -499,7 +366,6 @@ public final class MediaOutput {
                     throw new IOException("Android could not publish the Downloads row.");
                 }
                 finalized = true;
-                releaseReservation();
             } catch (RuntimeException exception) {
                 throw new IOException("Android could not publish the Downloads row.", exception);
             }
@@ -516,14 +382,6 @@ public final class MediaOutput {
                 // provider is temporarily unavailable.
             } finally {
                 finalized = true;
-                releaseReservation();
-            }
-        }
-
-        private void releaseReservation() {
-            if (reservationKey == null) return;
-            synchronized (MEDIASTORE_INSERT_LOCK) {
-                RESERVED_MEDIA_NAMES.remove(reservationKey);
             }
         }
     }

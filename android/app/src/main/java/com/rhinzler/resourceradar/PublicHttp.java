@@ -120,25 +120,6 @@ public final class PublicHttp implements Closeable {
         return fetchPage(rawUrl, null);
     }
 
-    /** Fixed, bounded, unauthenticated GitHub API request. No API redirects are followed. */
-    Page fetchUpdateRelease() throws IOException {
-        HttpUrl url = requirePublicHttps("https://api.github.com/repos/SRhinzler/resource-radar/releases/latest");
-        Request request = requestFor(url).get()
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28").build();
-        try (Response response = client.newCall(request).execute()) {
-            if (response.code() != 200) {
-                throw new PublicHttpException("GitHub release lookup failed.", "HTTP_" + response.code());
-            }
-            ResponseBody body = response.body();
-            if (body == null || body.contentLength() > 512 * 1024) {
-                throw new PublicHttpException("GitHub's release response exceeded the update limit.", "UPDATE_RESPONSE_INVALID");
-            }
-            return new Page(url, new String(readLimited(body.byteStream(), 512 * 1024),
-                    StandardCharsets.UTF_8), response.header("Content-Type"));
-        }
-    }
-
     /**
      * Resolves redirects with safe GET requests and returns the final URL.  The final
      * response body is not read; this method is intended for short-link/platform URL

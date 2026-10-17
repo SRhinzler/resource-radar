@@ -30,11 +30,6 @@ access.
    Project: https://kotlinlang.org/
    License: Apache License 2.0.
 
-6. AndroidX Activity 1.6.1 and AndroidX support dependencies
-   Project: https://developer.android.com/jetpack/androidx/releases/activity
-   License: Apache License 2.0.
-   https://www.apache.org/licenses/LICENSE-2.0
-
 This application does not include cookies, login credentials, private tokens,
 or a mechanism to bypass DRM, paywalls, or access controls. The Android media
 runtime is used only for public URLs accepted by the app's public-network

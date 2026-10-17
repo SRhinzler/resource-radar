@@ -45,7 +45,6 @@ public final class ResourceRadarBridge implements ResourceRadarService.DownloadE
     private static final int MAX_EVENT_LENGTH = 128 * 1024;
     private static final int MAX_URL_LENGTH = 4096;
     private static final int MAX_JOB_ID_LENGTH = 160;
-    private static final int MAX_HISTORY_ID_LENGTH = 128;
     private static final int MAX_DESTINATION_LENGTH = 32;
     private static final int MAX_DIRECT_RESOURCES = 80;
 
@@ -57,14 +56,7 @@ public final class ResourceRadarBridge implements ResourceRadarService.DownloadE
                     "downloadResources",
                     "downloadPlatformMedia",
                     "cancelDownloads",
-                    "openDownloads",
-                    "getDownloadHistory",
-                    "clearDownloadHistory",
-                    "openDownload",
-                    "checkForUpdates",
-                    "getUpdateStatus",
-                    "downloadUpdate",
-                    "openUpdateInstallSettings"
+                    "openDownloads"
             ))
     );
 
@@ -221,26 +213,6 @@ public final class ResourceRadarBridge implements ResourceRadarService.DownloadE
                 return service.cancelDownloads(requireJobId(value));
             case "openDownloads":
                 return service.openDownloads(requireDestination(value));
-            case "getDownloadHistory":
-                requireNullOrEmpty(value, "getDownloadHistory does not accept a payload.");
-                return service.getDownloadHistory();
-            case "clearDownloadHistory":
-                requireNullOrEmpty(value, "clearDownloadHistory does not accept a payload.");
-                return service.clearDownloadHistory();
-            case "openDownload":
-                return service.openDownload(requireHistoryId(value));
-            case "checkForUpdates":
-                requireNullOrEmpty(value, "checkForUpdates does not accept a payload.");
-                return service.checkForUpdates();
-            case "getUpdateStatus":
-                requireNullOrEmpty(value, "getUpdateStatus does not accept a payload.");
-                return service.getUpdateStatus();
-            case "downloadUpdate":
-                requireNullOrEmpty(value, "downloadUpdate does not accept a payload.");
-                return service.downloadUpdate();
-            case "openUpdateInstallSettings":
-                requireNullOrEmpty(value, "openUpdateInstallSettings does not accept a payload.");
-                return service.openUpdateInstallSettings();
             default:
                 // request() checks this set before scheduling, but keep the dispatch
                 // closed if another call path is added later.
@@ -361,16 +333,9 @@ public final class ResourceRadarBridge implements ResourceRadarService.DownloadE
         }
         String destination = (String) value;
         if (!"downloads".equals(destination) && !"playlist".equals(destination)) {
-            throw new IllegalArgumentException("Only Android Downloads destinations are allowed.");
+            throw new IllegalArgumentException("Only Downloads destinations are allowed.");
         }
         return destination;
-    }
-
-    private static String requireHistoryId(Object value) {
-        if (!(value instanceof String) || !isBoundedString((String) value, MAX_HISTORY_ID_LENGTH)) {
-            throw new IllegalArgumentException("The download history id is invalid.");
-        }
-        return (String) value;
     }
 
     private static String requireBoundedString(Object value, String label, int maximum) {
